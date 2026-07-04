@@ -1,5 +1,189 @@
-# mcmc-from-scratch
+# MCMC from scratch
 
-Metropolis–Hastings, Gibbs, and Hamiltonian Monte Carlo implemented from scratch in NumPy,
-validated against exact posteriors. Full README with derivations and results coming as the
-implementation lands.
+Metropolis–Hastings, Gibbs, and Hamiltonian Monte Carlo implemented in pure
+NumPy — no PyMC, no Stan, no autograd — and **validated against exact
+answers** at every level: hand-derived gradients against finite differences,
+sampler moments against closed-form posteriors, the ESS estimator against the
+AR(1) closed form, and (where no closed form exists) two independent
+inference routes against each other.
+
+![funnel](figures/funnel_scatter.png)
+
+*Neal's funnel, 10D. True marginal: $v \sim N(0, 3^2)$. A random walk never
+reaches the neck (sd$[v]$ = 2.22), gradient-guided HMC gets closer but
+diverges in the neck (sd = 2.60, 6% divergent), and reparameterizing the
+geometry solves the problem outright (sd = 2.99, zero divergences). Fixing
+the geometry beats tuning the sampler.*
+
+## Problem
+
+Bayesian inference needs expectations under a posterior known only up to a
+constant: $\pi(\theta) \propto p(y \mid \theta)\,p(\theta)$. MCMC builds a
+Markov chain with stationary distribution $\pi$ using only density *ratios*,
+so the intractable normalizer cancels. This repo implements the three
+classical kernels, the diagnostics needed to trust them, and experiments
+designed so that **every claim has a ground truth or a cross-check**.
+
+Full derivations (detailed balance → MH → Gibbs-as-MH → the HMC involution
+argument → dual averaging → ESS/R-hat) are in
+[`theory/derivations.md`](theory/derivations.md). The short version of why
+HMC works:
+
+$$\pi(x, p) \propto e^{-H(x,p)}, \quad H = -\log\tilde\pi(x) + \tfrac12\lVert p\rVert^2$$
+
+Hamiltonian flow conserves $H$, preserves phase-space volume (Liouville), and
+is reversible — an exact-flow proposal would always be accepted. The leapfrog
+integrator keeps volume preservation and reversibility *exactly* (each
+substep is a unit-Jacobian shear; the composition is palindromic) and loses
+only energy conservation to $O(\varepsilon^2)$, which a Metropolis step with
+$\alpha = \min(1, e^{-\Delta H})$ repairs. Both structural properties are
+pinned by tests: reversibility to $10^{-10}$, and a measured ~4× drop in peak
+$|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
+
+## What's implemented
+
+| Module | Contents |
+|---|---|
+| [`mcmc/metropolis.py`](mcmc/metropolis.py) | Random-walk MH, log-space accept, batched chains |
+| [`mcmc/gibbs.py`](mcmc/gibbs.py) | Systematic-scan driver over state dicts + Gaussian full conditionals derived via the precision matrix |
+| [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), divergence tracking |
+| [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, ESS, split-$\hat R$ |
+| [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel — with analytic gradients and exact reference samplers |
+| [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
+
+All log-densities are batched over chains, so 4 chains advance in lockstep as
+one NumPy computation. Everything is seeded and reproducible.
+
+## Results
+
+### 1. Exact-posterior validation (`experiments/validate_exact.py`)
+
+Correlated Gaussian ($\rho = 0.9$), 4 chains, overdispersed starts:
+
+| sampler | draws | accept | max mean err | rel cov err | $\tau(x_0)$ | ESS$(x_0)$ | ESS/1k evals | $\hat R$ |
+|---|---|---|---|---|---|---|---|---|
+| RWMH | 160k | 0.50 | 0.027 | 0.002 | 67.8 | 2 358 | 14.7 | 1.000 |
+| Gibbs | 160k | 1.00 | 0.009 | 0.003 | 9.5 | 16 778 | 52.4 | 1.000 |
+| HMC | 40k | 0.82 | 0.018 | 0.013 | **1.8** | **21 760** | 26.0 | 1.000 |
+
+All three reproduce the exact moments. The efficiency story has a nuance
+worth stating precisely: **per draw**, HMC dominates ($\tau$ 37× smaller than
+RWMH); **per density evaluation**, exact-conditional Gibbs wins on this
+target — when conjugacy hands you the full conditionals, use them. On the
+conjugate linear-regression posterior (samplers see only the unnormalized
+density), sampled means match the closed form to $\le 0.003$:
+
+<p align="center"><img src="figures/linreg_posterior.png" width="420"></p>
+
+<p align="center"><img src="figures/gaussian_autocorr.png" width="520"></p>
+
+### 2. Neal's funnel (`experiments/funnel.py`)
+
+True $v$-marginal is $N(0, 3^2)$ exactly — so bias is measurable:
+
+| sampler | draws | E$[v]$ (true 0) | sd$[v]$ (true 3) | $\tau(v)$ | ESS$(v)$ | $\hat R(v)$ | divergent |
+|---|---|---|---|---|---|---|---|
+| RWMH | 400k | 0.53 | 2.22 | 2361 | 169 | 1.04 | — |
+| HMC (centered) | 100k | 0.49 | 2.60 | 190 | 528 | 1.02 | 5 998 |
+| HMC (non-centered) | 100k | **0.02** | **2.99** | 12.5 | 8 001 | 1.000 | 0 |
+
+Two honest lessons the numbers force on you: (1) $\hat R = 1.04$ while
+missing the neck entirely — $\hat R \approx 1$ is *necessary, not
+sufficient*; only the exact marginal exposes the bias. (2) The centered HMC
+divergences aren't noise to suppress; they're the sampler reporting the
+region it cannot enter. The non-centered change of variables
+$x_i = e^{v/2} z_i$ makes the target an independent Gaussian (the Jacobian
+cancels the varying scale exactly — derivation in Sec. 4.6), and every
+pathology disappears.
+
+<p align="center"><img src="figures/funnel_v_marginal.png" width="520"></p>
+
+### 3. Real data: eight schools (`experiments/eight_schools.py`)
+
+Rubin's (1981) SAT coaching study under the hierarchical model
+$y_j \sim N(\theta_j, \sigma_j^2)$, $\theta_j \sim N(\mu, \tau^2)$,
+$p(\mu) \propto 1$, $\tau^2 \sim \text{InvGamma}(1, 1)$. No closed form
+exists, so correctness rests on **two independent routes agreeing**:
+conjugate Gibbs on the centered parameterization vs HMC on the non-centered
+one (different parameterizations, different kernels, different code paths).
+
+Result: all 10 posterior means agree to **0.131** (posterior sds are ~4.3,
+so this is within Monte Carlo error), $\hat R \le 1.002$ everywhere. HMC's
+ESS on $\mu$ is 63k from 80k draws vs Gibbs's 1.5k from 160k — the centered
+Gibbs chain suffers exactly the $\mu$–$\theta$ coupling that non-centering
+removes.
+
+<p align="center"><img src="figures/eight_schools_agreement.png" width="560"></p>
+<p align="center"><img src="figures/eight_schools_shrinkage.png" width="560"></p>
+
+**Prior sensitivity, stated plainly:** the InvGamma(1,1) prior on $\tau^2$
+was chosen to keep all Gibbs conditionals conjugate, and it concentrates
+$\tau$ near ~1.5, i.e. strong pooling. The classic half-Cauchy analysis
+(Gelman 2006) is far more diffuse in $\tau$. With $J = 8$ noisy groups the
+data genuinely cannot pin $\tau$ down, so the prior matters — both routes
+share the prior, which is what makes their agreement a valid check of the
+*samplers* rather than a claim about the *science*.
+
+## Reproduce
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && pip install -e .
+pytest                          # 22 tests; RuntimeWarnings are errors
+cd experiments
+python validate_exact.py        # ~30 s
+python funnel.py                # ~2 min
+python eight_schools.py         # ~1 min
+```
+
+Figures land in `figures/`; every table above is printed by the scripts.
+Seeds are fixed (`SEED = 20260703`).
+
+## Design notes
+
+- **Tests assert theory, not just plumbing.** Leapfrog reversibility at
+  $10^{-10}$; $O(\varepsilon^2)$ energy scaling; Gibbs's lag-1
+  autocorrelation equal to $\rho^2$ on a bivariate Gaussian; the ESS
+  estimator recovering $\tau = (1+\rho)/(1-\rho)$ on AR(1) data; every
+  hand-derived gradient against central differences.
+- **Divergences are a feature.** Trajectories that leave the typical set
+  overflow to `inf`/`NaN`, which propagates to a $-\infty$ acceptance ratio
+  and a rejection — the mechanism *is* the diagnostic. `np.errstate` is
+  scoped to exactly those computations, and the test suite turns any other
+  `RuntimeWarning` into a failure.
+- **Adaptation stops at warmup's end.** Tuning $\varepsilon$ from chain
+  history during sampling would break invariance; dual averaging freezes at
+  the averaged iterate.
+- **Samplers never see closed forms.** Models expose only
+  $\log\tilde\pi$ / $\nabla\log\tilde\pi$; exact posteriors live in separate
+  methods used purely for validation.
+
+## Limitations / next
+
+- Unit mass matrix; estimating $M$ from warmup covariance would fix the
+  Gaussian experiment's scale mismatch more elegantly than step-size tuning.
+- Fixed trajectory length (jittered): the principled endpoint is NUTS's
+  U-turn criterion.
+- Split-$\hat R$ without rank-normalization (Vehtari et al. 2021 is the
+  modern refinement).
+- **Planned phase 2:** Bayesian neural network posterior via this repo's HMC
+  on a small MLP — predictive uncertainty and calibration vs SGD point
+  estimates and deep ensembles.
+
+## References
+
+Key sources: Neal (2011) *MCMC using Hamiltonian dynamics*; Hoffman & Gelman
+(2014) JMLR (dual averaging); Geyer (1992) *Statist. Sci.* (initial sequence
+estimators); Gelman & Rubin (1992); Roberts, Gelman & Gilks (1997) (0.234);
+Neal (2003) (funnel); Rubin (1981) (data); Betancourt (2017) arXiv:1701.02434.
+Full list with roles in [`theory/derivations.md`](theory/derivations.md).
+
+## Provenance
+
+Built as a study resource: implemented from scratch with AI assistance
+(Claude), with every derivation written out in
+[`theory/derivations.md`](theory/derivations.md) and every non-obvious claim
+tested. MIT license.
+
+*Suggested GitHub topics:* `mcmc` `hamiltonian-monte-carlo` `gibbs-sampling`
+`metropolis-hastings` `bayesian-inference` `numpy` `from-scratch`
