@@ -73,26 +73,37 @@ class NealsFunnel:
         self.dim = dim
         self.sigma_v = float(sigma_v)
 
+    # States far into the neck can overflow e^{-v} in float64; the resulting
+    # -inf log-density is rejected by the Metropolis step, which is the
+    # correct outcome -- silence only the warning (see mcmc.models for the
+    # same pattern, explained).
+
     def logpdf(self, z):
         z = np.atleast_2d(z)
         v, x = z[:, 0], z[:, 1:]
         sumsq = np.sum(x * x, axis=1)
         k = self.dim - 1
-        return (
-            -0.5 * v**2 / self.sigma_v**2
-            - 0.5 * k * v
-            - 0.5 * np.exp(-v) * sumsq
-            - 0.5 * k * np.log(2.0 * np.pi)
-            - 0.5 * np.log(2.0 * np.pi * self.sigma_v**2)
-        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            return (
+                -0.5 * v**2 / self.sigma_v**2
+                - 0.5 * k * v
+                - 0.5 * np.exp(-v) * sumsq
+                - 0.5 * k * np.log(2.0 * np.pi)
+                - 0.5 * np.log(2.0 * np.pi * self.sigma_v**2)
+            )
 
     def grad_logpdf(self, z):
         z = np.atleast_2d(z)
         v, x = z[:, 0], z[:, 1:]
-        e_neg_v = np.exp(-v)
-        g = np.empty_like(z)
-        g[:, 0] = -v / self.sigma_v**2 - 0.5 * (self.dim - 1) + 0.5 * e_neg_v * np.sum(x * x, axis=1)
-        g[:, 1:] = -x * e_neg_v[:, None]
+        with np.errstate(over="ignore", invalid="ignore"):
+            e_neg_v = np.exp(-v)
+            g = np.empty_like(z)
+            g[:, 0] = (
+                -v / self.sigma_v**2
+                - 0.5 * (self.dim - 1)
+                + 0.5 * e_neg_v * np.sum(x * x, axis=1)
+            )
+            g[:, 1:] = -x * e_neg_v[:, None]
         return g
 
     def sample(self, n, rng):

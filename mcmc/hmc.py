@@ -51,13 +51,18 @@ def leapfrog(grad_logpdf, x, p, step_size, n_steps):
     running n_steps from (x', -p') returns exactly to (x, -p) up to
     float roundoff (verified in tests/test_hmc.py).
     """
-    x = x.copy()
-    p = p + 0.5 * step_size * grad_logpdf(x)
-    for k in range(n_steps):
-        x = x + step_size * p
-        if k < n_steps - 1:
-            p = p + step_size * grad_logpdf(x)
-    p = p + 0.5 * step_size * grad_logpdf(x)
+    # A trajectory that escapes the typical set can produce inf gradients and
+    # then NaN positions. That IS the divergence signal: the NaN propagates to
+    # a -inf acceptance ratio and the proposal is rejected (hmc() below), so
+    # only the arithmetic warning is silenced here, not the failure.
+    with np.errstate(over="ignore", invalid="ignore"):
+        x = x.copy()
+        p = p + 0.5 * step_size * grad_logpdf(x)
+        for k in range(n_steps):
+            x = x + step_size * p
+            if k < n_steps - 1:
+                p = p + step_size * grad_logpdf(x)
+        p = p + 0.5 * step_size * grad_logpdf(x)
     return x, p
 
 
@@ -124,9 +129,12 @@ def hmc(
         lp_prop = np.asarray(target.logpdf(x_prop), dtype=float)
 
         # -Delta H = [log pi(x') - K(p')] - [log pi(x) - K(p)]
-        neg_dH = (lp_prop - 0.5 * np.sum(p_prop**2, axis=1)) - (
-            lp - 0.5 * np.sum(p0**2, axis=1)
-        )
+        # Diverged trajectories carry inf/NaN through here by design; they
+        # are mapped to -inf below and rejected.
+        with np.errstate(over="ignore", invalid="ignore"):
+            neg_dH = (lp_prop - 0.5 * np.sum(p_prop**2, axis=1)) - (
+                lp - 0.5 * np.sum(p0**2, axis=1)
+            )
         neg_dH = np.where(np.isnan(neg_dH), -np.inf, neg_dH)
         accept = np.log(rng.uniform(size=n_chains)) < neg_dH
         x[accept] = x_prop[accept]
