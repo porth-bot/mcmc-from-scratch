@@ -1,5 +1,7 @@
 # MCMC from scratch
 
+![ci](https://github.com/porth-bot/mcmc-from-scratch/actions/workflows/ci.yml/badge.svg)
+
 Metropolis–Hastings, Gibbs, and Hamiltonian Monte Carlo implemented in pure
 NumPy — no PyMC, no Stan, no autograd — and **validated against exact
 answers** at every level: hand-derived gradients against finite differences,
