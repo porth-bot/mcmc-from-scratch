@@ -250,6 +250,42 @@ transformation as the eight-schools non-centered parameterization
 identical funnel in $(\log\tau, \theta)$ whenever the data only weakly
 identify the group-level scale.
 
+### 4.7 The Rosenbrock/banana: closed-form ground truth from a curved target
+
+The funnel varies *scale*; the Rosenbrock density varies *direction* — its mass
+lies on a thin parabolic ridge whose local covariance rotates along the arc, so
+again no single step size and unit mass are ideal. Take
+
+$$p(x_1, x_2) \propto \exp\!\big[-(x_1 - a)^2 - b\,(x_2 - x_1^2)^2\big].$$
+
+Unlike a generic banana this one has *fully closed-form* ground truth, because
+the $b$-term is Gaussian in $x_2$. Read the density as a conditional times a
+marginal. Integrating $x_2$ out,
+
+$$\int e^{-b(x_2 - x_1^2)^2}\,dx_2 = \sqrt{\pi/b}\quad(\text{independent of }x_1),$$
+
+so the $x_1$-marginal is exactly $x_1 \sim N(a, \tfrac12)$ and the conditional is
+$x_2 \mid x_1 \sim N(x_1^2,\ \tfrac1{2b})$. The normalizer is
+$\sqrt{\pi}\cdot\sqrt{\pi/b}$. Its moments follow from the normal identities
+$\mathbb E[X^2] = \mu^2+\sigma^2$, $\operatorname{Var}[X^2] = 2\sigma^4 + 4\mu^2\sigma^2$,
+$\operatorname{Cov}[X, X^2] = 2\mu\sigma^2$ applied to $X = x_1$ with
+$\mu=a,\ \sigma^2=\tfrac12$:
+
+$$\mathbb E[x_1]=a,\quad \operatorname{Var}[x_1]=\tfrac12,\qquad
+\mathbb E[x_2]=a^2+\tfrac12,$$
+$$\operatorname{Var}[x_2]=\underbrace{\tfrac1{2b}}_{\mathbb E[\operatorname{Var}(x_2\mid x_1)]}
++\underbrace{\tfrac12 + 2a^2}_{\operatorname{Var}(x_1^2)},\qquad
+\operatorname{Cov}[x_1,x_2]=\operatorname{Cov}(x_1,x_1^2)=a.$$
+
+This gives an exact answer key on a *curved* problem: a generative sampler
+($x_1$ then $x_2\mid x_1$), exact moments, and the exact $x_1$-marginal all
+follow with no approximation. The hand-derived gradient is
+$\partial_{x_1}\log p = -2(x_1-a) + 4b\,x_1(x_2 - x_1^2)$,
+$\partial_{x_2}\log p = -2b\,(x_2 - x_1^2)$; `experiments/validate_exact.py`
+(Part C) checks HMC against these and shows the residual covariance error that a
+single step size leaves on the high-curvature arms — the motivation for
+mass-matrix adaptation and NUTS.
+
 ## 5. The models
 
 ### 5.1 Conjugate Bayesian linear regression

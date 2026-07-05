@@ -9,6 +9,11 @@ Part B -- conjugate Bayesian linear regression: samplers see only the
 unnormalized log posterior; the exact Gaussian posterior provides the answer
 key. This is the same check as Part A but on a posterior arising from data.
 
+Part C -- Rosenbrock/banana: a curved target whose thin parabolic ridge is
+hard for fixed-step HMC. Ground truth is fully closed-form (exact marginal,
+conditional, moments, and sampler), so HMC draws are checked against the
+answer key both numerically and visually (samples over the true contours).
+
 Run:  python experiments/validate_exact.py
 """
 
@@ -20,7 +25,7 @@ from mcmc.gibbs import gibbs, make_gaussian_gibbs_updates
 from mcmc.hmc import hmc
 from mcmc.metropolis import random_walk_metropolis
 from mcmc.models import ConjugateLinearRegression
-from mcmc.targets import Gaussian
+from mcmc.targets import Gaussian, Rosenbrock
 
 SEED = 20260703
 N_CHAINS = 4
@@ -161,6 +166,72 @@ def part_b_linreg():
     savefig(fig, "linreg_posterior.png")
 
 
+def part_c_rosenbrock():
+    print()
+    print("=" * 72)
+    print("Part C: Rosenbrock/banana (a=1, b=10) -- curved geometry")
+    print("=" * 72)
+    target = Rosenbrock(a=1.0, b=10.0)
+    exact_mean, exact_cov = target.moments()
+    rng = np.random.default_rng(SEED + 2)
+    # Six chains initialized ON the ridge (x2 ~ x1^2): a sensible practitioner
+    # start that isolates the curvature challenge (exploring ALONG the banana)
+    # from the separate difficulty of a chain getting trapped off-ridge.
+    n_chains = 6
+    x1_0 = 1.0 + rng.standard_normal(n_chains) * 0.9
+    x0 = np.column_stack([x1_0, x1_0**2 + rng.standard_normal(n_chains) * 0.3])
+
+    res = hmc(
+        target, x0, n_samples=12_000, step_size=0.025, n_leapfrog=55, rng=rng,
+        n_warmup=4_000, adapt_step_size=True,
+    )
+    pooled = res.pooled()
+    row = {
+        "sampler": "HMC",
+        "draws": res.n_samples * n_chains,
+        "accept": float(res.accept_rate.mean()),
+        "max |mean err|": float(np.abs(pooled.mean(axis=0) - exact_mean).max()),
+        "rel cov err": float(
+            np.linalg.norm(np.cov(pooled.T) - exact_cov) / np.linalg.norm(exact_cov)
+        ),
+        "min ESS": float(min(ess(res.samples[:, :, i]) for i in range(2))),
+        "max R-hat": float(max(split_rhat(res.samples[:, :, i]) for i in range(2))),
+    }
+    print_table([row], list(row.keys()))
+    print(f"exact mean: {np.round(exact_mean, 4)}, "
+          f"exact cov: {np.round(exact_cov.ravel(), 4)}")
+    print("Note: the residual covariance error is the honest cost of the banana's\n"
+          "curvature -- a single step size / unit mass under-explores the thin, high-\n"
+          "curvature arms. Larger b (thinner ridge) makes this worse; mass-matrix\n"
+          "adaptation and NUTS (later roadmap) are the standard fixes.")
+
+    # figure: HMC draws over the true density contours, next to exact reference
+    # draws over the same contours -- a visual answer key.
+    xs = np.linspace(-2.2, 3.5, 400)
+    ys = np.linspace(-1.0, 11.0, 400)
+    X, Y = np.meshgrid(xs, ys)
+    logp = target.logpdf(np.column_stack([X.ravel(), Y.ravel()])).reshape(X.shape)
+    dens = np.exp(logp)
+    exact_draws = target.sample(4000, np.random.default_rng(SEED + 3))
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.0), sharex=True, sharey=True,
+                             constrained_layout=True)
+    for ax, pts, title in [
+        (axes[0], pooled[::15], "HMC draws"),
+        (axes[1], exact_draws, "exact reference draws"),
+    ]:
+        ax.contour(X, Y, dens, levels=8, colors="k", linewidths=0.5, alpha=0.6)
+        ax.plot(pts[:, 0], pts[:, 1], ".", ms=2, alpha=0.3, color="C0")
+        ax.set_xlabel(r"$x_1$")
+        ax.set_title(title, loc="left")
+    axes[0].set_ylabel(r"$x_2$")
+    fig.suptitle(r"Rosenbrock banana ($x_2 \approx x_1^2$): HMC tracks the ridge",
+                 x=0.02, ha="left")
+    savefig(fig, "rosenbrock_hmc.png")
+    return row
+
+
 if __name__ == "__main__":
     part_a_gaussian()
     part_b_linreg()
+    part_c_rosenbrock()

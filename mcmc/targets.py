@@ -113,6 +113,87 @@ class NealsFunnel:
         return np.column_stack([v, x])
 
 
+class Rosenbrock:
+    """The banana-shaped Rosenbrock density, a curved-geometry stress test.
+
+    log p(x1, x2) = -(x1 - a)^2 - b (x2 - x1^2)^2 + const
+
+    The exp of minus the classic Rosenbrock valley: a thin parabolic ridge
+    x2 ~ x1^2. Its curvature is exactly the pathology gradient methods on this
+    density must cope with -- the local covariance rotates along the arc, so a
+    single fixed HMC step size and mass are never ideal (same lesson as the
+    funnel, but from banana curvature rather than a varying scale).
+
+    Ground truth is unusually complete here because the b-term is Gaussian in
+    x2 and integrates out cleanly:
+
+        x1        ~ N(a, 1/2)             (marginal; the b-term contributes a
+                                           constant sqrt(pi/b) independent of x1)
+        x2 | x1   ~ N(x1^2, 1/(2b))       (Gaussian conditional)
+
+    so the exact moments are known in closed form (derived in
+    theory/derivations.md via E[x1^2], Var[x1^2], Cov[x1, x1^2] for a normal):
+
+        E[x1] = a,                  Var[x1] = 1/2
+        E[x2] = a^2 + 1/2,          Var[x2] = 1/(2b) + 1/2 + 2 a^2
+        Cov[x1, x2] = a
+
+    and ``sample`` draws exact reference points via that generative process
+    (x1 first, then x2 | x1) -- the answer key the samplers are checked against.
+
+    Gradient (hand-derived):
+        d log p / dx1 = -2 (x1 - a) + 4 b x1 (x2 - x1^2)
+        d log p / dx2 = -2 b (x2 - x1^2)
+    """
+
+    dim = 2
+
+    def __init__(self, a=1.0, b=10.0):
+        # b sets the ridge thinness: x2|x1 has sd 1/sqrt(2b). b=10 is a clearly
+        # curved but sample-able banana; the classic Rosenbrock uses b=100, a
+        # ridge so thin that fixed-step HMC struggles badly (that is the point).
+        self.a = float(a)
+        self.b = float(b)
+        # log normalizer: integral of exp(log p) = sqrt(pi) * sqrt(pi/b)
+        self._lognorm = -0.5 * (np.log(np.pi) + np.log(np.pi / self.b))
+
+    # A divergent leapfrog trajectory can send x1 far enough that x1**2
+    # overflows float64; the resulting +/-inf log-density is rejected by the
+    # Metropolis step (the correct outcome), so only the warning is silenced --
+    # the same pattern used by NealsFunnel above.
+
+    def logpdf(self, x):
+        x = np.atleast_2d(x)
+        x1, x2 = x[:, 0], x[:, 1]
+        with np.errstate(over="ignore", invalid="ignore"):
+            return self._lognorm - (x1 - self.a) ** 2 - self.b * (x2 - x1**2) ** 2
+
+    def grad_logpdf(self, x):
+        x = np.atleast_2d(x)
+        x1, x2 = x[:, 0], x[:, 1]
+        g = np.empty_like(x)
+        with np.errstate(over="ignore", invalid="ignore"):
+            resid = x2 - x1**2
+            g[:, 0] = -2.0 * (x1 - self.a) + 4.0 * self.b * x1 * resid
+            g[:, 1] = -2.0 * self.b * resid
+        return g
+
+    def moments(self):
+        """Exact (mean, cov) from the closed-form marginal/conditional above."""
+        a, b = self.a, self.b
+        mean = np.array([a, a**2 + 0.5])
+        cov = np.array(
+            [[0.5, a], [a, 1.0 / (2.0 * b) + 0.5 + 2.0 * a**2]]
+        )
+        return mean, cov
+
+    def sample(self, n, rng):
+        """Exact draws: x1 ~ N(a, 1/2), then x2 | x1 ~ N(x1^2, 1/(2b))."""
+        x1 = self.a + rng.standard_normal(n) / np.sqrt(2.0)
+        x2 = x1**2 + rng.standard_normal(n) / np.sqrt(2.0 * self.b)
+        return np.column_stack([x1, x2])
+
+
 def finite_difference_grad(logpdf, x, eps=1e-6):
     """Central-difference gradient of a batched logpdf, for gradient checks.
 
