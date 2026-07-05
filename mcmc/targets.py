@@ -6,6 +6,8 @@ marginals) so sampler output can be checked against exact answers rather than
 eyeballed.
 """
 
+import math
+
 import numpy as np
 
 
@@ -192,6 +194,81 @@ class Rosenbrock:
         x1 = self.a + rng.standard_normal(n) / np.sqrt(2.0)
         x2 = x1**2 + rng.standard_normal(n) / np.sqrt(2.0 * self.b)
         return np.column_stack([x1, x2])
+
+
+class StudentT:
+    """Multivariate Student-t: N(mu, Sigma)-shaped centre with polynomial tails.
+
+    The heavy tails are the point. Where a Gaussian proposal or unit-metric HMC
+    tuned to the bulk is calibrated, the same sampler badly under-visits a
+    Student-t's tails: the density there decays like a power law, not an
+    exponential, so occasional far excursions carry real probability mass that a
+    bulk-scaled step rarely reaches. This is the standard heavy-tail mixing
+    cautionary target, and a useful contrast to the (light-tailed) Gaussian.
+
+    Density (scale matrix Sigma, dof nu), with q = (x-mu)^T Sigma^{-1} (x-mu):
+
+        p(x) = C * (1 + q/nu)^{-(nu+d)/2},
+        C = Gamma((nu+d)/2) / [ Gamma(nu/2) (nu pi)^{d/2} |Sigma|^{1/2} ].
+
+    log p(x) = log C - (nu+d)/2 * log(1 + q/nu)
+    grad log p(x) = -((nu+d)/nu) * Sigma^{-1}(x - mu) / (1 + q/nu)
+
+    Note the score is the Gaussian score -Sigma^{-1}(x-mu) divided by
+    (1 + q/nu): near the mode it matches a Gaussian, but far out the 1/(1+q/nu)
+    factor softens the restoring force -- exactly why the tails are fat.
+
+    Ground truth: Sigma is the *scale*, not the covariance. The mean is mu for
+    nu > 1; the covariance is nu/(nu-2) * Sigma for nu > 2 (and is undefined
+    below that). ``sample`` draws exact reference points via the Gaussian
+    scale-mixture representation x = mu + (L z) / sqrt(w/nu), z ~ N(0, I),
+    w ~ chi^2_nu, L = chol(Sigma).
+    """
+
+    def __init__(self, mean, scale, dof):
+        self.mean = np.atleast_1d(np.asarray(mean, dtype=float))
+        self.scale = np.atleast_2d(np.asarray(scale, dtype=float))
+        self.dof = float(dof)
+        self.dim = self.mean.shape[0]
+        L = np.linalg.cholesky(self.scale)
+        self._chol = L
+        self.precision = np.linalg.inv(self.scale)
+        self._logdet = 2.0 * np.sum(np.log(np.diag(L)))
+        d, nu = self.dim, self.dof
+        self._lognorm = (
+            math.lgamma(0.5 * (nu + d))
+            - math.lgamma(0.5 * nu)
+            - 0.5 * d * math.log(nu * math.pi)
+            - 0.5 * self._logdet
+        )
+
+    def _quad(self, x):
+        delta = np.atleast_2d(x) - self.mean
+        return np.einsum("ni,ij,nj->n", delta, self.precision, delta), delta
+
+    def logpdf(self, x):
+        q, _ = self._quad(x)
+        d, nu = self.dim, self.dof
+        return self._lognorm - 0.5 * (nu + d) * np.log1p(q / nu)
+
+    def grad_logpdf(self, x):
+        q, delta = self._quad(x)
+        d, nu = self.dim, self.dof
+        coeff = -((nu + d) / nu) / (1.0 + q / nu)          # (n,)
+        return coeff[:, None] * (delta @ self.precision)   # precision symmetric
+
+    def moments(self):
+        """Exact (mean, cov); cov requires nu > 2 (else raises)."""
+        if self.dof <= 2.0:
+            raise ValueError("covariance is undefined for dof <= 2")
+        cov = self.dof / (self.dof - 2.0) * self.scale
+        return self.mean.copy(), cov
+
+    def sample(self, n, rng):
+        """Exact draws via the Gaussian scale mixture (chi^2 mixing)."""
+        z = rng.standard_normal((n, self.dim))
+        w = rng.chisquare(self.dof, size=n)
+        return self.mean + (z @ self._chol.T) * np.sqrt(self.dof / w)[:, None]
 
 
 def finite_difference_grad(logpdf, x, eps=1e-6):
