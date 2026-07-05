@@ -18,5 +18,11 @@ dev = ["pytest>=7.0", "matplotlib>=3.7"]
 include = ["mcmc*"]
 
 [tool.pytest.ini_options]
+# Run the unit tests AND the docstring examples. --doctest-modules is scoped
+# to the (numpy-only) mcmc package and tests via testpaths, so the doctests
+# never try to import experiments-only deps like matplotlib -- keeping CI's
+# numpy+pytest job green.
+addopts = "--doctest-modules"
+testpaths = ["mcmc", "tests"]
 # numerical sloppiness (overflow, invalid ops) fails tests instead of hiding
 filterwarnings = ["error::RuntimeWarning"]

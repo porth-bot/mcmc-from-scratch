@@ -40,6 +40,24 @@ def gibbs(update_fns, init_state, n_samples, rng, n_warmup=0, store=None):
     SamplerResult where ``samples`` stacks the stored (flattened) keys along
     the last axis, in the order given; ``extras["fields"]`` maps each key to
     its column slice, ``extras["unpack"]`` recovers a dict of arrays.
+
+    Examples
+    --------
+    Sample a correlated 2D Gaussian by cycling its full conditionals:
+
+    >>> import numpy as np
+    >>> from mcmc.gibbs import make_gaussian_gibbs_updates
+    >>> updates = make_gaussian_gibbs_updates(
+    ...     mean=[2.0, -3.0], cov=[[1.0, 0.5], [0.5, 1.0]])
+    >>> rng = np.random.default_rng(0)
+    >>> res = gibbs(updates, {"x": np.zeros((4, 2))},
+    ...             n_samples=2000, rng=rng, n_warmup=500)
+    >>> res.samples.shape
+    (4, 2000, 2)
+    >>> bool(np.allclose(res.pooled().mean(axis=0), [2.0, -3.0], atol=0.2))
+    True
+    >>> res.accept_rate.tolist()   # Gibbs accepts every full-conditional proposal
+    [1.0, 1.0, 1.0, 1.0]
     """
     state = {k: np.array(v, dtype=float, copy=True) for k, v in init_state.items()}
     store = list(store) if store is not None else list(state.keys())

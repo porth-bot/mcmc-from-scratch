@@ -103,6 +103,24 @@ def hmc(
     SamplerResult; ``extras`` holds per-iteration energy errors ``delta_H``
     (n_chains, n_samples), the final ``step_size``, ``n_divergent``, and
     ``n_grad_evals`` for compute-normalized efficiency comparisons.
+
+    Examples
+    --------
+    Long leapfrog trajectories mix a correlated Gaussian efficiently --
+    high acceptance and an accurately recovered mean:
+
+    >>> import numpy as np
+    >>> from mcmc.targets import Gaussian
+    >>> target = Gaussian(mean=[1.0, -1.0], cov=[[1.0, 0.8], [0.8, 1.0]])
+    >>> rng = np.random.default_rng(0)
+    >>> res = hmc(target, np.zeros((4, 2)), n_samples=1000, step_size=0.3,
+    ...           n_leapfrog=15, rng=rng, n_warmup=300)
+    >>> res.samples.shape
+    (4, 1000, 2)
+    >>> bool(np.allclose(res.pooled().mean(axis=0), [1.0, -1.0], atol=0.15))
+    True
+    >>> bool(res.accept_rate.mean() > 0.6)
+    True
     """
     x = np.array(x0, dtype=float, copy=True)
     n_chains, dim = x.shape

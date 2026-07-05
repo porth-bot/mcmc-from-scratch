@@ -46,6 +46,24 @@ def random_walk_metropolis(target, x0, n_samples, step_size, rng, n_warmup=0):
     -------
     SamplerResult with ``samples`` (n_chains, n_samples, dim) and per-chain
     post-warmup ``accept_rate``.
+
+    Examples
+    --------
+    Recover the mean of a standard 2D Gaussian from four chains:
+
+    >>> import numpy as np
+    >>> from mcmc.targets import Gaussian
+    >>> target = Gaussian(mean=[0.0, 0.0], cov=[[1.0, 0.0], [0.0, 1.0]])
+    >>> rng = np.random.default_rng(0)
+    >>> res = random_walk_metropolis(
+    ...     target, np.zeros((4, 2)), n_samples=2000, step_size=2.0,
+    ...     rng=rng, n_warmup=500)
+    >>> res.samples.shape
+    (4, 2000, 2)
+    >>> bool(np.abs(res.pooled().mean(axis=0)).max() < 0.2)
+    True
+    >>> bool(0.1 < res.accept_rate.mean() < 0.9)   # step 2.0 is a sane scale here
+    True
     """
     x = np.array(x0, dtype=float, copy=True)
     n_chains, dim = x.shape
