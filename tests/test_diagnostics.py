@@ -6,8 +6,16 @@ form -- a ground truth for the ESS estimator itself.
 """
 
 import numpy as np
+import pytest
 
-from mcmc.diagnostics import autocorrelation, ess, integrated_autocorr_time, split_rhat
+from mcmc.diagnostics import (
+    autocorr_summary,
+    autocorrelation,
+    ess,
+    integrated_autocorr_time,
+    plot_autocorrelation,
+    split_rhat,
+)
 
 
 def ar1(rho, m, n, rng):
@@ -52,3 +60,35 @@ def test_rhat_flags_unmixed_chains():
     x = rng.standard_normal((4, 5_000))
     x += np.array([0.0, 0.0, 3.0, 3.0])[:, None]  # two chains stuck elsewhere
     assert split_rhat(x) > 1.5
+
+
+def test_autocorr_summary_matches_the_scalar_diagnostics():
+    # The plot helper's data must agree with the standalone estimators, and its
+    # curve must be the same autocorrelation, just truncated for display.
+    rng = np.random.default_rng(5)
+    x = ar1(0.85, 4, 40_000, rng)
+    s = autocorr_summary(x, max_lag=30)
+    assert s["tau"] == integrated_autocorr_time(x)
+    assert s["ess"] == ess(x)
+    np.testing.assert_allclose(s["rho"], autocorrelation(x, max_lag=30))
+    assert s["rho"][0] == pytest.approx(1.0)
+    # a positively-correlated chain truncates well past lag 0; the cutoff is
+    # computed from the full autocorrelation, not the display window, so it may
+    # exceed max_lag.
+    assert s["cutoff_lag"] > 0
+    # more correlation -> later cutoff and larger tau than a near-iid chain
+    s_iid = autocorr_summary(rng.standard_normal((4, 40_000)))
+    assert s["tau"] > s_iid["tau"]
+    assert s["cutoff_lag"] >= s_iid["cutoff_lag"]
+
+
+def test_plot_autocorrelation_draws_the_summary_curve():
+    plt = pytest.importorskip("matplotlib.pyplot")  # experiments-only dep
+    rng = np.random.default_rng(6)
+    x = ar1(0.7, 4, 20_000, rng)
+    s = autocorr_summary(x, max_lag=25)
+    ax = plot_autocorrelation(x, max_lag=25, label="AR(1)")
+    line = ax.get_lines()[0]
+    np.testing.assert_allclose(line.get_ydata(), s["rho"])
+    np.testing.assert_array_equal(line.get_xdata(), s["lags"])
+    plt.close("all")

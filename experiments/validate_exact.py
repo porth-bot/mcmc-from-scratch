@@ -20,7 +20,12 @@ Run:  python experiments/validate_exact.py
 import numpy as np
 
 from common import plt, print_table, savefig
-from mcmc.diagnostics import autocorrelation, ess, integrated_autocorr_time, split_rhat
+from mcmc.diagnostics import (
+    ess,
+    integrated_autocorr_time,
+    plot_autocorrelation,
+    split_rhat,
+)
 from mcmc.gibbs import gibbs, make_gaussian_gibbs_updates
 from mcmc.hmc import hmc
 from mcmc.metropolis import random_walk_metropolis
@@ -94,16 +99,14 @@ def part_a_gaussian():
     axes[-1].set_xlabel("iteration")
     savefig(fig, "gaussian_traces.png")
 
-    # autocorrelation figure
+    # autocorrelation figure: the diagnostics helper draws each curve and marks
+    # the Geyer truncation lag (dotted) where tau's sum stops, so the plot shows
+    # why each sampler's ESS is what it is, not just the raw decay.
     fig, ax = plt.subplots(figsize=(5.5, 3.2), constrained_layout=True)
     for name, (res, _) in runs.items():
-        rho = autocorrelation(res.samples[:, :, 0], max_lag=120)
-        ax.plot(rho, label=name, lw=1.4)
-    ax.axhline(0, color="k", lw=0.6)
-    ax.set_xlabel("lag")
+        plot_autocorrelation(res.samples[:, :, 0], ax=ax, max_lag=120, label=name)
     ax.set_ylabel(r"autocorrelation of $x_0$")
     ax.set_title(r"Correlated Gaussian ($\rho=0.9$): mixing speed", loc="left")
-    ax.legend()
     savefig(fig, "gaussian_autocorr.png")
     return rows
 

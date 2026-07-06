@@ -46,6 +46,28 @@ def autocorrelation(x, max_lag=None):
     return acov / acov[0]
 
 
+def _geyer_tau(rho):
+    """Geyer's initial monotone positive sequence estimate of tau from rho_k.
+
+    Returns (tau, cutoff_lag): tau >= 1 and the last lag included in the sum
+    (the pair sums Gamma_m = rho_{2m} + rho_{2m+1} are summed for m < cutoff,
+    covering lags 0 .. 2*cutoff-1). Shared by integrated_autocorr_time and
+    autocorr_summary so the plotted cutoff is exactly the one tau uses.
+    """
+    n_pairs = len(rho) // 2
+    gamma = rho[0 : 2 * n_pairs : 2] + rho[1 : 2 * n_pairs : 2]
+    # initial positive sequence: truncate at the first non-positive pair
+    positive = np.nonzero(gamma <= 0)[0]
+    cutoff = int(positive[0]) if len(positive) else len(gamma)
+    g = gamma[:cutoff]
+    # monotone envelope: pair sums of a reversible chain are non-increasing
+    g = np.minimum.accumulate(g) if len(g) else g
+    # sum of pair sums counts rho_0 = 1 once: tau = 2 * sum(Gamma) - 1
+    tau = max(1.0, 2.0 * float(np.sum(g)) - 1.0)
+    cutoff_lag = max(0, 2 * cutoff - 1)
+    return tau, cutoff_lag
+
+
 def integrated_autocorr_time(x):
     """Integrated autocorrelation time tau via Geyer's initial monotone
     positive sequence.
@@ -54,17 +76,64 @@ def integrated_autocorr_time(x):
     Gamma_m = rho_{2m} + rho_{2m+1} first fail to be positive, after
     enforcing monotone non-increase. Returns tau >= 1.
     """
-    rho = autocorrelation(x)
-    n_pairs = len(rho) // 2
-    gamma = rho[0 : 2 * n_pairs : 2] + rho[1 : 2 * n_pairs : 2]
-    # initial positive sequence: truncate at the first non-positive pair
-    positive = np.nonzero(gamma <= 0)[0]
-    cutoff = positive[0] if len(positive) else len(gamma)
-    g = gamma[:cutoff]
-    # monotone envelope: pair sums of a reversible chain are non-increasing
-    g = np.minimum.accumulate(g) if len(g) else g
-    # sum of pair sums counts rho_0 = 1 once: tau = 2 * sum(Gamma) - 1
-    return max(1.0, 2.0 * float(np.sum(g)) - 1.0)
+    tau, _ = _geyer_tau(autocorrelation(x))
+    return tau
+
+
+def autocorr_summary(x, max_lag=None):
+    """Everything an autocorrelation plot needs, as pure-NumPy data.
+
+    Returns a dict with the lags and normalized autocorrelations rho_k (out to
+    ``max_lag``), the Geyer initial-monotone-sequence ``cutoff_lag`` beyond
+    which lags are discarded as noise, and the resulting ``tau``/``ess``. The
+    curve is truncated for display but ``tau``/``ess``/``cutoff_lag`` are
+    computed from the full-length autocorrelation, so they match
+    integrated_autocorr_time / ess exactly. Kept separate from the drawing so
+    it stays testable without a plotting backend.
+    """
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+    m, n = x.shape
+    rho_full = autocorrelation(x)
+    tau, cutoff_lag = _geyer_tau(rho_full)
+    if max_lag is None:
+        max_lag = min(len(rho_full) - 1, 4 * int(np.ceil(tau)) + 10)
+    max_lag = min(max_lag, len(rho_full) - 1)
+    return {
+        "lags": np.arange(max_lag + 1),
+        "rho": rho_full[: max_lag + 1],
+        "cutoff_lag": cutoff_lag,
+        "tau": tau,
+        "ess": m * n / tau,
+    }
+
+
+def plot_autocorrelation(x, ax=None, max_lag=None, label=None, color=None,
+                         show_cutoff=True):
+    """Draw the autocorrelation function rho_k of a scalar chain(s).
+
+    Marks the Geyer truncation lag (where tau's sum stops) and annotates the
+    estimated tau/ESS, so the figure shows *why* the reported ESS is what it
+    is rather than just the raw curve. matplotlib is imported lazily -- it is
+    an experiments-only dependency, not required to import mcmc.diagnostics.
+    Returns the Axes.
+    """
+    import matplotlib.pyplot as plt
+
+    s = autocorr_summary(x, max_lag=max_lag)
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5.5, 3.2), constrained_layout=True)
+    line, = ax.plot(s["lags"], s["rho"], lw=1.4, color=color,
+                    label=(label if label is None
+                           else f"{label} (τ≈{s['tau']:.1f})"))
+    if show_cutoff:
+        ax.axvline(s["cutoff_lag"], color=line.get_color(), ls=":", lw=1,
+                   alpha=0.7)
+    ax.axhline(0, color="k", lw=0.6)
+    ax.set_xlabel("lag")
+    ax.set_ylabel("autocorrelation")
+    if label is not None:
+        ax.legend()
+    return ax
 
 
 def ess(x):
