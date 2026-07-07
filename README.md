@@ -49,8 +49,9 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/metropolis.py`](mcmc/metropolis.py) | Random-walk MH, log-space accept, batched chains |
 | [`mcmc/gibbs.py`](mcmc/gibbs.py) | Systematic-scan driver over state dicts + Gaussian full conditionals derived via the precision matrix |
 | [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), divergence tracking |
+| [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, ESS, split-$\hat R$ |
-| [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel — with analytic gradients and exact reference samplers |
+| [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
 | [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
 
 All log-densities are batched over chains, so 4 chains advance in lockstep as
@@ -126,16 +127,38 @@ data genuinely cannot pin $\tau$ down, so the prior matters — both routes
 share the prior, which is what makes their agreement a valid check of the
 *samplers* rather than a claim about the *science*.
 
+### 4. Multimodal targets: parallel tempering (`experiments/tempering.py`)
+
+Every sampler above assumes it can reach the whole distribution. On a
+well-separated mixture that assumption breaks: the barrier between modes is
+crossed with exponentially small probability, so a single chain reports
+whichever mode it started in. Two Gaussians 12 units apart (weights
+0.35 / 0.65), **both samplers started entirely in the left mode**:
+
+| sampler | E$[x_0]$ (true 1.8) | left-mode frac (true 0.35) |
+|---|---|---|
+| single random walk | −6.0 | 1.00 (never crossed) |
+| parallel tempering (8 replicas) | **1.82** | **0.35** |
+
+Parallel tempering runs replicas at inverse temperatures $\beta_k$ from 1 down
+to 0.01; the hot replicas roam freely across the flattened landscape and
+adjacent-replica swaps ferry that mobility down to the cold ($\beta=1$) chain.
+Swap acceptance holds at ~0.7 across the ladder, so the mode-hopping actually
+reaches the bottom.
+
+<p align="center"><img src="figures/tempering_bimodal.png" width="620"></p>
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 22 tests; RuntimeWarnings are errors
+pytest                          # 49 tests; RuntimeWarnings are errors
 cd experiments
 python validate_exact.py        # ~30 s
 python funnel.py                # ~2 min
 python eight_schools.py         # ~1 min
+python tempering.py             # ~20 s  (bimodal: tempering vs a trapped chain)
 ```
 
 Figures land in `figures/`; every table above is printed by the scripts.
