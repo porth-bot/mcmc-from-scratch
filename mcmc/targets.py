@@ -48,6 +48,89 @@ class Gaussian:
         return self.mean + z @ self._chol.T
 
 
+class GaussianMixture:
+    """Mixture of Gaussians sum_k w_k N(mu_k, Sigma_k) -- the standard
+    *multimodal* benchmark.
+
+    Well-separated components are the classic failure case for a single-chain
+    random walk or unit-metric HMC: the sampler falls into whichever mode it
+    starts in and essentially never crosses the low-density barrier between
+    modes, so it reports one mode with wildly wrong weights. It is the target
+    parallel tempering (``mcmc.tempering``) is built to handle.
+
+    Log-density via log-sum-exp for stability:
+
+        log p(x) = logsumexp_k [ log w_k + log N(x; mu_k, Sigma_k) ].
+
+    Gradient (hand-derived; checked against finite differences). With the
+    responsibilities r_k(x) = w_k N_k(x) / sum_j w_j N_j(x) (a softmax of the
+    per-component log-densities, so the normalizer cancels),
+
+        grad log p(x) = -sum_k r_k(x) Sigma_k^{-1} (x - mu_k),
+
+    a responsibility-weighted average of the per-component score functions.
+    """
+
+    def __init__(self, weights, means, covs):
+        self.weights = np.asarray(weights, dtype=float)
+        self.weights = self.weights / self.weights.sum()
+        self.means = np.atleast_2d(np.asarray(means, dtype=float))
+        self.n_comp, self.dim = self.means.shape
+        covs = np.asarray(covs, dtype=float)
+        if covs.ndim == 2:  # one shared covariance -> broadcast
+            covs = np.broadcast_to(covs, (self.n_comp, self.dim, self.dim))
+        self.covs = covs
+        self._prec = np.stack([np.linalg.inv(c) for c in covs])
+        self._lognorm = np.array([
+            -0.5 * (self.dim * np.log(2.0 * np.pi)
+                    + 2.0 * np.sum(np.log(np.diag(np.linalg.cholesky(c)))))
+            for c in covs
+        ])
+        self._logw = np.log(self.weights)
+
+    def _log_components(self, x):
+        """Per-component log(w_k N_k(x)); shape (n_chains, n_comp)."""
+        x = np.atleast_2d(x)
+        delta = x[:, None, :] - self.means[None, :, :]        # (n, K, d)
+        quad = np.einsum("nki,kij,nkj->nk", delta, self._prec, delta)
+        return self._logw[None, :] + self._lognorm[None, :] - 0.5 * quad
+
+    def logpdf(self, x):
+        lc = self._log_components(x)
+        m = lc.max(axis=1, keepdims=True)
+        return (m[:, 0] + np.log(np.sum(np.exp(lc - m), axis=1)))
+
+    def grad_logpdf(self, x):
+        lc = self._log_components(x)
+        r = np.exp(lc - lc.max(axis=1, keepdims=True))
+        r = r / r.sum(axis=1, keepdims=True)                  # responsibilities (n, K)
+        delta = np.atleast_2d(x)[:, None, :] - self.means[None, :, :]
+        scores = -np.einsum("kij,nkj->nki", self._prec, delta)  # per-comp score (n,K,d)
+        return np.einsum("nk,nki->ni", r, scores)
+
+    def mean(self):
+        return self.weights @ self.means
+
+    def cov(self):
+        """Exact covariance: sum_k w_k (Sigma_k + mu_k mu_k^T) - mu mu^T."""
+        mu = self.mean()
+        second = sum(
+            self.weights[k] * (self.covs[k] + np.outer(self.means[k], self.means[k]))
+            for k in range(self.n_comp)
+        )
+        return second - np.outer(mu, mu)
+
+    def sample(self, n, rng):
+        """Exact draws: pick a component by weight, then sample it."""
+        comp = rng.choice(self.n_comp, size=n, p=self.weights)
+        out = np.empty((n, self.dim))
+        for k in range(self.n_comp):
+            m = comp == k
+            L = np.linalg.cholesky(self.covs[k])
+            out[m] = self.means[k] + rng.standard_normal((int(m.sum()), self.dim)) @ L.T
+        return out
+
+
 class NealsFunnel:
     """Neal's funnel (Neal 2003, "Slice sampling", Ann. Statist.).
 

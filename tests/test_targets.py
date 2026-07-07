@@ -5,6 +5,7 @@ import pytest
 
 from mcmc.targets import (
     Gaussian,
+    GaussianMixture,
     NealsFunnel,
     Rosenbrock,
     StudentT,
@@ -136,3 +137,42 @@ def test_studentt_has_heavier_tails_than_matched_gaussian():
 def test_studentt_covariance_undefined_below_dof_2():
     with pytest.raises(ValueError):
         StudentT(mean=[0.0], scale=[[1.0]], dof=1.5).moments()
+
+
+def make_mixture():
+    return GaussianMixture(
+        weights=[0.3, 0.7],
+        means=[[-4.0, 0.0], [4.0, 1.0]],
+        covs=[[[1.0, 0.4], [0.4, 1.0]], [[0.6, 0.0], [0.0, 1.5]]],
+    )
+
+
+def test_mixture_gradient_matches_finite_differences():
+    """The responsibility-weighted score is the easy place to drop the
+    softmax normalizer or a Sigma^{-1}; finite differences catch it."""
+    gm = make_mixture()
+    rng = np.random.default_rng(1)
+    x = rng.uniform(-6, 6, size=(10, 2))  # spans both modes and the valley
+    np.testing.assert_allclose(
+        gm.grad_logpdf(x), finite_difference_grad(gm.logpdf, x), rtol=1e-5, atol=1e-6
+    )
+
+
+def test_mixture_logpdf_normalizes_and_matches_bruteforce():
+    gm = make_mixture()
+    # against an explicit sum of scipy-free Gaussian densities at a few points
+    pts = np.array([[-4.0, 0.0], [4.0, 1.0], [0.0, 0.0]])
+    brute = np.zeros(len(pts))
+    for k in range(gm.n_comp):
+        d = pts - gm.means[k]
+        prec = np.linalg.inv(gm.covs[k])
+        lognorm = -0.5 * (2 * np.log(2 * np.pi) + np.log(np.linalg.det(gm.covs[k])))
+        brute += gm.weights[k] * np.exp(lognorm - 0.5 * np.einsum("ni,ij,nj->n", d, prec, d))
+    np.testing.assert_allclose(gm.logpdf(pts), np.log(brute), rtol=1e-10)
+
+
+def test_mixture_exact_moments_match_sampler():
+    gm = make_mixture()
+    draws = gm.sample(400_000, np.random.default_rng(2))
+    np.testing.assert_allclose(draws.mean(axis=0), gm.mean(), atol=0.03)
+    np.testing.assert_allclose(np.cov(draws.T), gm.cov(), atol=0.06)
