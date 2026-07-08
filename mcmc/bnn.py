@@ -161,6 +161,55 @@ class BayesianNNRegression:
         return mean, np.sqrt(var)
 
 
+def train_map(model, x0, n_steps=3000, lr=0.01, rng=None):
+    """MAP point estimate(s) by Adam ascent on the log-posterior.
+
+    The single point estimate and every member of a deep ensemble are the same
+    computation: maximize ``model.logpdf`` (Gaussian likelihood + Gaussian
+    prior, i.e. an L2-regularized least-squares fit) from a starting weight
+    vector. The Gaussian prior is exactly the weight decay a trainer would use,
+    so this is an honest "train the net" baseline that shares the BNN's model
+    and objective -- the only thing HMC adds is sampling the posterior instead
+    of climbing to its mode.
+
+    Adam (Kingma & Ba 2015) is written out rather than pulled from a library:
+    bias-corrected first/second moment estimates ``m``, ``v`` with the standard
+    ``(0.9, 0.999, 1e-8)`` constants. Because ``grad_logpdf`` is batched over
+    the leading axis, an entire ensemble trains in one vectorized run -- pass
+    ``x0`` of shape ``(n_members, dim)`` and get back the trained members.
+
+    Parameters
+    ----------
+    model : BayesianNNRegression
+    x0 : ndarray (n_members, dim)
+        Initial weights, one row per ensemble member. Different rows (different
+        random inits) are what give a deep ensemble its spread.
+    n_steps, lr : int, float
+        Adam iterations and step size.
+    rng : unused
+        Accepted for a uniform call signature; MAP training is deterministic
+        given ``x0``.
+
+    Returns
+    -------
+    theta : ndarray (n_members, dim)
+        Trained weights. Guaranteed (tested) to reach a higher log-posterior
+        than the initialization.
+    """
+    theta = np.atleast_2d(np.array(x0, dtype=float, copy=True))
+    m = np.zeros_like(theta)
+    v = np.zeros_like(theta)
+    beta1, beta2, eps = 0.9, 0.999, 1e-8
+    for t in range(1, n_steps + 1):
+        g = model.grad_logpdf(theta)  # gradient of the log-posterior (ascend)
+        m = beta1 * m + (1.0 - beta1) * g
+        v = beta2 * v + (1.0 - beta2) * g**2
+        m_hat = m / (1.0 - beta1**t)
+        v_hat = v / (1.0 - beta2**t)
+        theta = theta + lr * m_hat / (np.sqrt(v_hat) + eps)
+    return theta
+
+
 def make_gapped_sine(rng, n=40, noise_std=0.1, gap=(-0.5, 0.5)):
     """1D toy: y = sin(3x) sampled on [-2, 2] with a hole cut out of the middle.
 

@@ -3,7 +3,7 @@ differences) and end-to-end HMC inference on the gapped-sine toy."""
 
 import numpy as np
 
-from mcmc.bnn import BayesianNNRegression, make_gapped_sine
+from mcmc.bnn import BayesianNNRegression, make_gapped_sine, train_map
 from mcmc.hmc import hmc
 from mcmc.targets import finite_difference_grad
 
@@ -95,6 +95,41 @@ def test_hmc_fits_toy_and_widens_in_the_gap():
     rmse = np.sqrt(np.mean((mean[observed] - truth[observed]) ** 2))
     assert rmse < 0.15  # noise_std is 0.1; the function is recovered
     assert std[gap].mean() > 2.0 * std[observed].mean()
+
+
+def test_train_map_ascends_the_log_posterior_and_fits_observed_data():
+    """Adam MAP training must (1) monotone-ish increase the log-posterior it
+    optimizes -- final logpdf strictly above the initialization for every
+    ensemble member -- and (2) actually fit the observed data (low RMSE on the
+    inputs it was shown). This is the point-estimate / deep-ensemble baseline
+    the Day-5 experiment compares HMC against, so it has to genuinely train."""
+    model, rng = _toy(seed=2)
+    x0 = 0.1 * rng.standard_normal((5, model.dim))  # a 5-member ensemble
+    lp0 = model.logpdf(x0)
+    theta = train_map(model, x0, n_steps=2000, lr=0.01)
+    lp1 = model.logpdf(theta)
+    assert theta.shape == x0.shape
+    assert np.all(lp1 > lp0)  # every member climbed
+
+    preds = model.forward(theta, model.X)  # (5, n_data)
+    rmse = np.sqrt(np.mean((preds - model.y[None, :]) ** 2, axis=1))
+    assert np.all(rmse < 0.15)  # noise floor is 0.1; each member fits the data
+
+
+def test_train_map_members_diverge_in_the_gap():
+    """Different inits give a deep ensemble its epistemic spread: trained
+    members agree where they saw data but disagree across the held-out gap.
+    (The experiment's finding is that they still disagree *less* than HMC --
+    here we only assert the spread is non-trivial and gap-concentrated.)"""
+    model, rng = _toy(seed=3)
+    x0 = 0.5 * rng.standard_normal((8, model.dim))
+    theta = train_map(model, x0, n_steps=2000, lr=0.01)
+    grid = np.linspace(-2.0, 2.0, 200)
+    preds = model.forward(theta, grid)  # (8, 200)
+    spread = preds.std(axis=0)
+    observed = (grid < -0.5) | (grid > 0.5)
+    gap = (grid > -0.5) & (grid < 0.5)
+    assert spread[gap].mean() > spread[observed].mean()
 
 
 def test_make_gapped_sine_respects_the_gap():
