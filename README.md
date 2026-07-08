@@ -53,6 +53,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, ESS, split-$\hat R$ |
 | [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
 | [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
+| [`mcmc/bnn.py`](mcmc/bnn.py) | Bayesian neural network (1-hidden-layer tanh MLP) with hand-written backprop log-posterior gradient, sampled by HMC; plus an Adam MAP/deep-ensemble trainer sharing the same model and objective |
 
 All log-densities are batched over chains, so 4 chains advance in lockstep as
 one NumPy computation. Everything is seeded and reproducible.
@@ -148,17 +149,61 @@ reaches the bottom.
 
 <p align="center"><img src="figures/tempering_bimodal.png" width="620"></p>
 
+### 5. A real posterior: Bayesian neural network (`experiments/bnn.py`)
+
+Every target above is a hand-written density. This one is a *model*: the
+unknown is the full weight vector of a small tanh MLP (`mcmc/bnn.py`,
+$3H+1 = 49$ dimensions at $H=16$), and the target is its Bayesian posterior —
+Gaussian likelihood, isotropic Gaussian prior. The log-posterior gradient is a
+backprop pass written out by hand and checked against finite differences, so
+HMC is running on exactly the quantity training would compute. The data is
+$\sin(3x)$ on $[-2, 2]$ **with a gap cut out of the middle**; the question is
+which method reports that it is guessing across the gap.
+
+Three predictive bands on the same model — HMC (samples the posterior), a
+5-member deep ensemble (the same net from 5 random inits), and a single Adam
+MAP point estimate:
+
+<p align="center"><img src="figures/bnn_predictive.png" width="900"></p>
+
+Held-out calibration on 400 fresh points, split into the observed region and
+the gap (95% target coverage):
+
+| method | region | 95% coverage | mean NLL | mean pred. std |
+|---|---|---|---|---|
+| HMC (posterior) | observed | 0.94 | −0.67 | 0.11 |
+| HMC (posterior) | **gap** | **1.00** | **0.08** | **0.24** |
+| deep ensemble (5) | observed | 0.88 | −0.50 | 0.11 |
+| deep ensemble (5) | **gap** | 0.57 | 0.84 | 0.14 |
+| point estimate (MAP) | observed | 0.91 | −0.63 | 0.10 |
+| point estimate (MAP) | **gap** | **0.30** | **2.47** | 0.10 |
+
+The point estimate has no epistemic uncertainty — its band is a constant-width
+noise ribbon, so it stays just as confident inside the gap (coverage collapses
+to 0.30, NLL blows up to 2.47). The deep ensemble widens and is the strong
+cheap baseline, but still under-covers the gap (0.57). HMC widens the most and
+stays calibrated (1.00 / NLL 0.08).
+
+**Convergence is judged in function space, on purpose.** The weight posterior
+is invariant to permuting hidden units and to sign-flipping (tanh is odd), so
+it is massively multimodal and split-$\hat R$ on a raw weight coordinate is
+meaningless — measured here, median 1.55 and up to 2.58 across coordinates.
+The *predictions* are a permutation-invariant functional of the weights, and
+their split-$\hat R$ sits at 1.02 (max 1.08) with ESS in the hundreds. Always
+diagnose the quantity you care about, not the raw parameters.
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 49 tests; RuntimeWarnings are errors
+pytest                          # 51 tests; RuntimeWarnings are errors
 cd experiments
 python validate_exact.py        # ~30 s
 python funnel.py                # ~2 min
 python eight_schools.py         # ~1 min
 python tempering.py             # ~20 s  (bimodal: tempering vs a trapped chain)
+python bnn.py                   # ~1 min  (Bayesian NN: HMC vs ensemble vs MAP)
 ```
 
 Figures land in `figures/`; every table above is printed by the scripts.
@@ -191,9 +236,11 @@ Seeds are fixed (`SEED = 20260703`).
   U-turn criterion.
 - Split-$\hat R$ without rank-normalization (Vehtari et al. 2021 is the
   modern refinement).
-- **Planned phase 2:** Bayesian neural network posterior via this repo's HMC
-  on a small MLP — predictive uncertainty and calibration vs SGD point
-  estimates and deep ensembles.
+- **Phase 2 (done):** Bayesian neural network posterior via this repo's HMC on
+  a small MLP — predictive uncertainty and calibration vs a MAP point estimate
+  and a deep ensemble ([`experiments/bnn.py`](experiments/bnn.py), section 5).
+  Next on this thread: a diagonal mass matrix so HMC does not need such a small
+  step size on the ~49-dim weight posterior.
 
 ## References
 
