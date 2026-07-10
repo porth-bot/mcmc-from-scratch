@@ -51,7 +51,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), divergence tracking |
 | [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction — RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
 | [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
-| [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, ESS, split-$\hat R$ |
+| [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, ESS, split-$\hat R$, compute-normalized efficiency (ESS per second / per evaluation) |
 | [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
 | [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
 | [`mcmc/bnn.py`](mcmc/bnn.py) | Bayesian neural network (1-hidden-layer tanh MLP) with hand-written backprop log-posterior gradient, sampled by HMC; plus an Adam MAP/deep-ensemble trainer sharing the same model and objective |
@@ -193,19 +193,80 @@ The *predictions* are a permutation-invariant functional of the weights, and
 their split-$\hat R$ sits at 1.02 (max 1.08) with ESS in the hundreds. Always
 diagnose the quantity you care about, not the raw parameters.
 
+### 6. External benchmark: ours vs emcee (`experiments/external_benchmark.py`)
+
+Every section above validates against an *exact answer*. This one validates
+against another *sampler*: [emcee](https://emcee.readthedocs.io) (Foreman-Mackey
+et al. 2013), the widely used affine-invariant ensemble sampler. emcee is
+gradient-free and its stretch move is invariant under affine reparameterization
+— which is the entire benchmark. It is run **vectorized** on our batched
+`logpdf` (same NumPy-over-an-ensemble computation as ours, so the wall-clock gap
+is algorithmic), ESS is computed with *our* estimator for every sampler, and
+"evaluations" counts every call touching the whole model over the full run —
+a density eval (RWMH/emcee), a full-conditional draw (Gibbs), or a gradient eval
+(HMC), with emcee's counted exactly by wrapping its log-prob.
+
+**Correlated Gaussian** ($\rho = 0.9$), worst-dimension ESS:
+
+| sampler | grad? | draws | min ESS | ESS / 1k evals | $\hat R$ |
+|---|---|---|---|---|---|
+| RWMH (ours) | no | 160k | 2 112 | 12.6 | 1.001 |
+| Gibbs (ours) | no | 160k | 16 778 | **49.9** | 1.000 |
+| HMC (ours) | yes | 40k | **20 608** | 24.6 | 1.000 |
+| emcee (stretch) | no | 256k | 8 050 | 27.9 | 1.003 |
+
+Per evaluation, emcee's affine-invariant stretch beats the naive
+coordinate-wise random walk with **zero tuning** (27.9 vs 12.6 — the
+correlation an affine map removes costs it nothing) and even edges HMC's
+per-eval number. But recall an HMC evaluation is a *gradient*, the rest are
+*densities* (a gradient costs a constant factor more — the honest asterisk on
+the per-eval column). On a target this cheap and low-dimensional, exact-
+conditional Gibbs wins outright — both per evaluation and, at ~38k ESS/s,
+per wall-clock second. No single method leads on every axis.
+
+**Eight schools** (10-dim), ESS on $\mu$ and the hard funnel-neck coordinate $\tau$:
+
+| sampler | grad? | ESS($\mu$) | ESS($\tau$) | ESS($\tau$) / 1k evals | $\hat R(\tau)$ |
+|---|---|---|---|---|---|
+| Gibbs (ours, centered) | no | 601 | 6 690 | **7.6** | 1.001 |
+| HMC (ours, non-centered) | yes | **30 274** | 5 872 | 6.4 | 1.001 |
+| emcee (stretch, non-centered) | no | 6 845 | 6 035 | 6.9 | 1.004 |
+
+HMC is the only sampler uniformly efficient across all ten coordinates —
+gradient plus non-centering give ESS($\mu$) ~30k — but that took a hand-derived,
+Jacobian-corrected gradient *and* the reparameterization, and it still logged
+~1% divergences in the neck. **emcee's real case is here:** with no gradient and
+no reparameterization, it reaches ESS comparable to HMC on the hard $\tau$
+coordinate and balanced ESS elsewhere, for the price of writing down the
+log-density alone. Centered Gibbs is fastest per second but its $\mu$–$\theta$
+coupling wrecks ESS($\mu$) (~600) — the same coupling non-centering removes.
+
+<p align="center"><img src="figures/external_benchmark.png" width="820"></p>
+
+The honest summary: **use the gradient when you have it and the dimension isn't
+tiny** (HMC's uniform, high per-coordinate ESS), **use conjugacy when you have
+it** (Gibbs's cheap exact conditionals), and **reach for a gradient-free
+ensemble like emcee when deriving a gradient is impractical** — it is
+genuinely competitive per evaluation and needs nothing but the log-density.
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 51 tests; RuntimeWarnings are errors
+pytest                          # 58 tests; RuntimeWarnings are errors
 cd experiments
 python validate_exact.py        # ~30 s
 python funnel.py                # ~2 min
 python eight_schools.py         # ~1 min
 python tempering.py             # ~20 s  (bimodal: tempering vs a trapped chain)
 python bnn.py                   # ~1 min  (Bayesian NN: HMC vs ensemble vs MAP)
+python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
 ```
+
+`emcee` is used *only* by the external benchmark — it is not a dependency of the
+package or the tests (CI installs numpy + pytest only). Install it with
+`pip install emcee` or `pip install -e '.[bench]'`.
 
 Figures land in `figures/`; every table above is printed by the scripts.
 Seeds are fixed (`SEED = 20260703`).
@@ -248,7 +309,8 @@ Seeds are fixed (`SEED = 20260703`).
 Key sources: Neal (2011) *MCMC using Hamiltonian dynamics*; Hoffman & Gelman
 (2014) JMLR (dual averaging); Geyer (1992) *Statist. Sci.* (initial sequence
 estimators); Gelman & Rubin (1992); Roberts, Gelman & Gilks (1997) (0.234);
-Neal (2003) (funnel); Rubin (1981) (data); Betancourt (2017) arXiv:1701.02434.
+Neal (2003) (funnel); Rubin (1981) (data); Betancourt (2017) arXiv:1701.02434;
+Foreman-Mackey et al. (2013) PASP (emcee, the external-benchmark baseline).
 Full list with roles in [`theory/derivations.md`](theory/derivations.md).
 
 ## Provenance

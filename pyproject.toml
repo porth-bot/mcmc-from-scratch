@@ -13,6 +13,9 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "matplotlib>=3.7"]
+# external-benchmark only: emcee is the reference sampler in
+# experiments/external_benchmark.py, never imported by the package or the tests.
+bench = ["emcee>=3.1"]
 
 [tool.setuptools.packages.find]
 include = ["mcmc*"]
