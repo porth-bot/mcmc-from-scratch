@@ -148,6 +148,48 @@ def ess(x):
     return m * n / integrated_autocorr_time(x)
 
 
+def efficiency_summary(chains, seconds, n_evals):
+    """Compute-normalized efficiency of one scalar parameter.
+
+    The raw ESS answers "how many independent draws is this worth"; to
+    *compare samplers* you must divide it by what each draw cost. Two honest
+    currencies:
+
+    - wall-clock: ``ess_per_sec = ESS / seconds`` -- the metric a practitioner
+      actually feels, but hardware- and implementation-dependent.
+    - target evaluations: ``ess_per_keval = 1000 * ESS / n_evals`` -- a
+      hardware-independent proxy, where one "evaluation" is one call that
+      touches the whole model (a density eval for RWMH/emcee, a full-conditional
+      draw for Gibbs, a gradient eval for HMC). It is only *approximately*
+      comparable across samplers: a gradient costs a constant factor more than
+      a density, so this column flatters gradient-free methods relative to
+      wall-clock -- which is exactly the gradient-free camp's argument.
+
+    Parameters
+    ----------
+    chains : ndarray (m, n) or (n,)
+        Post-warmup draws of a single scalar parameter across chains.
+    seconds : float
+        Wall-clock time for the whole run (warmup included -- it is a real cost).
+    n_evals : int
+        Total target evaluations for the whole run (warmup/burn-in included).
+
+    Returns
+    -------
+    dict with ``tau``, ``ess``, ``ess_per_sec``, ``ess_per_keval``.
+    """
+    chains = np.atleast_2d(np.asarray(chains, dtype=float))
+    m, n = chains.shape
+    tau = integrated_autocorr_time(chains)
+    ess_val = m * n / tau
+    return {
+        "tau": tau,
+        "ess": float(ess_val),
+        "ess_per_sec": float(ess_val / seconds) if seconds > 0 else float("nan"),
+        "ess_per_keval": float(1000.0 * ess_val / n_evals) if n_evals > 0 else float("nan"),
+    }
+
+
 def split_rhat(x):
     """Split-R-hat for one scalar parameter.
 

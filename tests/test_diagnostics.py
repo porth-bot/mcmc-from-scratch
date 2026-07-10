@@ -11,6 +11,7 @@ import pytest
 from mcmc.diagnostics import (
     autocorr_summary,
     autocorrelation,
+    efficiency_summary,
     ess,
     integrated_autocorr_time,
     plot_autocorrelation,
@@ -60,6 +61,27 @@ def test_rhat_flags_unmixed_chains():
     x = rng.standard_normal((4, 5_000))
     x += np.array([0.0, 0.0, 3.0, 3.0])[:, None]  # two chains stuck elsewhere
     assert split_rhat(x) > 1.5
+
+
+def test_efficiency_summary_is_ess_normalized_by_cost():
+    # ESS must match the standalone estimator, and the two rate columns must be
+    # exactly ESS divided by the wall-clock and (per-1k) evaluation budgets.
+    rng = np.random.default_rng(7)
+    x = ar1(0.6, 4, 20_000, rng)
+    seconds, n_evals = 2.5, 500_000
+    s = efficiency_summary(x, seconds, n_evals)
+    assert s["ess"] == pytest.approx(ess(x))
+    assert s["tau"] == integrated_autocorr_time(x)
+    assert s["ess_per_sec"] == pytest.approx(s["ess"] / seconds)
+    assert s["ess_per_keval"] == pytest.approx(1000.0 * s["ess"] / n_evals)
+
+
+def test_efficiency_summary_handles_degenerate_budgets():
+    # Zero time / zero evals must not raise (a not-yet-run sampler): report NaN.
+    s = efficiency_summary(np.random.default_rng(8).standard_normal((4, 2_000)),
+                           seconds=0.0, n_evals=0)
+    assert np.isnan(s["ess_per_sec"]) and np.isnan(s["ess_per_keval"])
+    assert s["ess"] > 0
 
 
 def test_autocorr_summary_matches_the_scalar_diagnostics():
