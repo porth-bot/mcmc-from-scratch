@@ -148,6 +148,48 @@ def ess(x):
     return m * n / integrated_autocorr_time(x)
 
 
+def tail_ess(x, prob=0.05):
+    """Tail effective sample size (Vehtari et al. 2021, Sec. 4.3).
+
+    The ordinary (bulk) ESS is computed from the raw draws and is dominated by
+    how well the *centre* of the distribution mixes. But a sampler can explore
+    the bulk fine while barely visiting the tails -- and it is the tails that
+    matter for quantiles, credible-interval endpoints, and tail probabilities.
+    Bulk-ESS is blind to this; tail-ESS is designed to catch it.
+
+    The construction "localizes" the ESS at the tails via indicator variables.
+    For a lower/upper tail probability ``prob`` (default 5%), form the empirical
+    ``prob`` and ``1 - prob`` quantiles from the *pooled* draws, and for each
+    turn the chains into a 0/1 indicator series -- "is this draw past the tail
+    cutoff?". That indicator is a Bernoulli process whose autocorrelation
+    measures how the chain moves in and out of the tail specifically. Its ESS is
+    the tail-ESS for that quantile, and we report the *minimum* over the two
+    tails (the worse-explored side is the binding constraint):
+
+        tail-ESS = min( ESS[ 1{x <= Q_prob} ],  ESS[ 1{x >= Q_{1-prob}} ] ).
+
+    A large gap between tail-ESS and bulk-ESS is the flag that summaries about
+    the tails are less trustworthy than the reported bulk-ESS suggests.
+
+    x : (n,) or (m, n) draws of one scalar parameter across chains.
+    prob : lower tail probability in (0, 0.5); the upper cutoff is 1 - prob.
+
+    This is the localized-indicator tail-ESS. Vehtari et al. additionally
+    rank-normalize before the bulk statistics; the indicator construction here
+    is already on a bounded 0/1 scale, so it is left as-is -- the honest
+    simplification is that we do not fold or rank-normalize, which matters for
+    bulk-ESS on heavy tails but not for these Bernoulli indicators.
+    """
+    if not 0.0 < prob < 0.5:
+        raise ValueError("prob must be in (0, 0.5)")
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+    lo, hi = np.quantile(x, [prob, 1.0 - prob])
+    # ess() of the tail indicators; ess handles the (m, n) chain shape.
+    lower = ess((x <= lo).astype(float))
+    upper = ess((x >= hi).astype(float))
+    return float(min(lower, upper))
+
+
 def efficiency_summary(chains, seconds, n_evals):
     """Compute-normalized efficiency of one scalar parameter.
 
@@ -220,7 +262,9 @@ def split_rhat(x):
 def summarize(samples, names=None):
     """Per-dimension diagnostic table for samples of shape (m, n, dim).
 
-    Returns a list of dicts: mean, sd, ESS, tau, split-R-hat per dimension.
+    Returns a list of dicts: mean, sd, bulk ESS, tail ESS, tau, split-R-hat per
+    dimension. The tail ESS sits next to the bulk ESS so a poorly-explored tail
+    (a much smaller tail_ess) is visible in the same row.
     """
     m, n, dim = samples.shape
     names = names or [f"x[{i}]" for i in range(dim)]
@@ -235,6 +279,7 @@ def summarize(samples, names=None):
                 "sd": float(chains.std(ddof=1)),
                 "tau": tau,
                 "ess": m * n / tau,
+                "tail_ess": tail_ess(chains),
                 "rhat": split_rhat(chains),
             }
         )

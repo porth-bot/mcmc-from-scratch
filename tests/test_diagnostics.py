@@ -16,6 +16,7 @@ from mcmc.diagnostics import (
     integrated_autocorr_time,
     plot_autocorrelation,
     split_rhat,
+    tail_ess,
 )
 
 
@@ -48,6 +49,61 @@ def test_ess_of_iid_samples_is_close_to_n():
     rng = np.random.default_rng(2)
     x = rng.standard_normal((4, 20_000))
     assert 0.85 * 80_000 < ess(x) < 1.15 * 80_000
+
+
+def test_tail_ess_of_iid_is_close_to_n():
+    # For iid draws the tail indicators are iid Bernoulli, so tail-ESS ~ N.
+    rng = np.random.default_rng(5)
+    x = rng.standard_normal((4, 20_000))
+    N = 80_000
+    assert 0.8 * N < tail_ess(x) < 1.2 * N
+
+
+def test_tail_ess_decreases_with_autocorrelation():
+    # A slower AR(1) lingers in the tail longer, so the tail indicator is more
+    # autocorrelated and tail-ESS falls monotonically with rho.
+    rng = np.random.default_rng(6)
+    te = [tail_ess(ar1(rho, 4, 50_000, rng)) for rho in (0.0, 0.5, 0.9)]
+    assert te[0] > te[1] > te[2] > 0
+
+
+def test_tail_ess_is_the_min_over_both_tails():
+    # By construction tail-ESS is the smaller of the two per-quantile ESSs;
+    # it must not exceed either one.
+    rng = np.random.default_rng(7)
+    x = ar1(0.8, 4, 40_000, rng)
+    lo, hi = np.quantile(x, [0.05, 0.95])
+    lower = ess((x <= lo).astype(float))
+    upper = ess((x >= hi).astype(float))
+    assert tail_ess(x) == pytest.approx(min(lower, upper))
+
+
+def test_tail_ess_rejects_bad_probability():
+    rng = np.random.default_rng(8)
+    x = rng.standard_normal((2, 1000))
+    for bad in (0.0, 0.5, 0.7, -0.1):
+        with pytest.raises(ValueError):
+            tail_ess(x, prob=bad)
+
+
+def test_tail_ess_flags_a_stuck_tail_via_the_min_over_sides():
+    # The motivating case: one tail mixes fine while the other is reached only
+    # in rare, long sticky excursions. tail-ESS takes the min over the two
+    # sides, so it reports the bad side even when the other looks healthy --
+    # and it lands well below the bulk-ESS, which averages over the whole run.
+    rng = np.random.default_rng(9)
+    m, n = 4, 60_000
+    x = rng.standard_normal((m, n))
+    for c in range(m):  # scatter a few long, stuck *upper*-tail excursions
+        for s in rng.integers(0, n, size=6):
+            L = int(rng.integers(150, 300))
+            x[c, s : s + L] = 4.0
+    lo, hi = np.quantile(x, [0.05, 0.95])
+    lower = ess((x <= lo).astype(float))   # untouched, well-mixed side
+    upper = ess((x >= hi).astype(float))   # the sticky side
+    assert upper < 0.1 * lower             # the two sides disagree by 100x
+    assert tail_ess(x) == pytest.approx(min(lower, upper))
+    assert tail_ess(x) < 0.7 * ess(x)      # tail is worse than the bulk
 
 
 def test_rhat_near_one_for_mixed_chains():
