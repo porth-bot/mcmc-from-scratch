@@ -13,8 +13,11 @@ Two roles:
   parameterization vs HMC on the non-centered one) plus R-hat/ESS.
 """
 
+from __future__ import annotations
+
 import numpy as np
 
+from .gibbs import UpdateFn
 from .targets import Gaussian
 
 
@@ -38,14 +41,16 @@ class ConjugateLinearRegression:
     for the comparison.
     """
 
-    def __init__(self, X, y, noise_var, prior_var):
+    def __init__(
+        self, X: np.ndarray, y: np.ndarray, noise_var: float, prior_var: float
+    ):
         self.X = np.asarray(X, dtype=float)
         self.y = np.asarray(y, dtype=float)
         self.noise_var = float(noise_var)
         self.prior_var = float(prior_var)
         self.dim = self.X.shape[1]
 
-    def logpdf(self, beta):
+    def logpdf(self, beta: np.ndarray) -> np.ndarray:
         beta = np.atleast_2d(beta)
         resid = self.y - beta @ self.X.T  # (n_chains, n_data)
         return (
@@ -53,12 +58,12 @@ class ConjugateLinearRegression:
             - 0.5 * np.sum(beta**2, axis=1) / self.prior_var
         )
 
-    def grad_logpdf(self, beta):
+    def grad_logpdf(self, beta: np.ndarray) -> np.ndarray:
         beta = np.atleast_2d(beta)
         resid = self.y - beta @ self.X.T
         return (resid @ self.X) / self.noise_var - beta / self.prior_var
 
-    def exact_posterior(self):
+    def exact_posterior(self) -> Gaussian:
         precision = self.X.T @ self.X / self.noise_var + np.eye(self.dim) / self.prior_var
         cov = np.linalg.inv(precision)
         mean = cov @ self.X.T @ self.y / self.noise_var
@@ -104,14 +109,20 @@ class EightSchoolsNonCentered:
         dL/deta_j = e^t r_j / sigma_j^2 - eta_j
     """
 
-    def __init__(self, y=EIGHT_SCHOOLS_Y, sigma=EIGHT_SCHOOLS_SIGMA, a=1.0, b=1.0):
+    def __init__(
+        self,
+        y: np.ndarray = EIGHT_SCHOOLS_Y,
+        sigma: np.ndarray = EIGHT_SCHOOLS_SIGMA,
+        a: float = 1.0,
+        b: float = 1.0,
+    ):
         self.y = np.asarray(y, dtype=float)
         self.sigma2 = np.asarray(sigma, dtype=float) ** 2
         self.a, self.b = float(a), float(b)
         self.n_schools = len(self.y)
         self.dim = self.n_schools + 2
 
-    def _split(self, z):
+    def _split(self, z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         z = np.atleast_2d(z)
         return z[:, 0], z[:, 1], z[:, 2:]
 
@@ -121,7 +132,7 @@ class EightSchoolsNonCentered:
     # proposal (exactly what should happen to a diverged trajectory), so we
     # only silence the warning, not the mechanism.
 
-    def logpdf(self, z):
+    def logpdf(self, z: np.ndarray) -> np.ndarray:
         mu, t, eta = self._split(z)
         with np.errstate(over="ignore", invalid="ignore"):
             r = self.y - mu[:, None] - np.exp(t)[:, None] * eta
@@ -132,7 +143,7 @@ class EightSchoolsNonCentered:
                 - self.b * np.exp(-2.0 * t)
             )
 
-    def grad_logpdf(self, z):
+    def grad_logpdf(self, z: np.ndarray) -> np.ndarray:
         mu, t, eta = self._split(z)
         with np.errstate(over="ignore", invalid="ignore"):
             e_t = np.exp(t)
@@ -148,7 +159,7 @@ class EightSchoolsNonCentered:
             g[:, 2:] = e_t[:, None] * w - eta
         return g
 
-    def transform(self, z):
+    def transform(self, z: np.ndarray) -> dict[str, np.ndarray]:
         """Map unconstrained draws to interpretable parameters.
 
         z : (..., J+2) -> dict with mu (...), tau (...), theta (..., J).
@@ -158,7 +169,12 @@ class EightSchoolsNonCentered:
         return {"mu": mu, "tau": tau, "theta": mu[..., None] + tau[..., None] * eta}
 
 
-def make_eight_schools_gibbs_updates(y=EIGHT_SCHOOLS_Y, sigma=EIGHT_SCHOOLS_SIGMA, a=1.0, b=1.0):
+def make_eight_schools_gibbs_updates(
+    y: np.ndarray = EIGHT_SCHOOLS_Y,
+    sigma: np.ndarray = EIGHT_SCHOOLS_SIGMA,
+    a: float = 1.0,
+    b: float = 1.0,
+) -> list[UpdateFn]:
     """Conjugate full conditionals for the *centered* eight-schools model.
 
     All three blocks are conjugate (derivations in theory/derivations.md,
@@ -176,20 +192,26 @@ def make_eight_schools_gibbs_updates(y=EIGHT_SCHOOLS_Y, sigma=EIGHT_SCHOOLS_SIGM
     sigma2 = np.asarray(sigma, dtype=float) ** 2
     J = len(y)
 
-    def update_theta(state, rng):
+    def update_theta(
+        state: dict[str, np.ndarray], rng: np.random.Generator
+    ) -> dict[str, np.ndarray]:
         prec = 1.0 / sigma2 + 1.0 / state["tau2"][:, None]
         mean = (y / sigma2 + state["mu"][:, None] / state["tau2"][:, None]) / prec
         state["theta"] = mean + rng.standard_normal(mean.shape) / np.sqrt(prec)
         return state
 
-    def update_mu(state, rng):
+    def update_mu(
+        state: dict[str, np.ndarray], rng: np.random.Generator
+    ) -> dict[str, np.ndarray]:
         m = state["theta"].shape[0]
         state["mu"] = state["theta"].mean(axis=1) + np.sqrt(
             state["tau2"] / J
         ) * rng.standard_normal(m)
         return state
 
-    def update_tau2(state, rng):
+    def update_tau2(
+        state: dict[str, np.ndarray], rng: np.random.Generator
+    ) -> dict[str, np.ndarray]:
         rate = b + 0.5 * np.sum((state["theta"] - state["mu"][:, None]) ** 2, axis=1)
         state["tau2"] = 1.0 / rng.gamma(a + J / 2.0, scale=1.0 / rate)
         return state

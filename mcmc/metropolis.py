@@ -21,12 +21,23 @@ one of the two reasons RWMH degrades in high dimension (the other: diffusive
 exploration covers distance ~ step * sqrt(n) rather than ~ n).
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
 
 from .base import SamplerResult
 
 
-def random_walk_metropolis(target, x0, n_samples, step_size, rng, n_warmup=0):
+def random_walk_metropolis(
+    target: Any,
+    x0: np.ndarray,
+    n_samples: int,
+    step_size: float | np.ndarray,
+    rng: np.random.Generator,
+    n_warmup: int = 0,
+) -> SamplerResult:
     """Run batched random-walk Metropolis chains.
 
     Parameters

@@ -54,6 +54,8 @@ experiment. What HMC gives here is a posterior over functions whose
 predictive spread widens where the data leave gaps.
 """
 
+from __future__ import annotations
+
 import numpy as np
 
 
@@ -75,7 +77,14 @@ class BayesianNNRegression:
     ``(n_chains, dim)`` arrays); see ``mcmc/base.py``.
     """
 
-    def __init__(self, X, y, n_hidden=32, noise_std=0.1, prior_std=1.0):
+    def __init__(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        n_hidden: int = 32,
+        noise_std: float = 0.1,
+        prior_std: float = 1.0,
+    ):
         self.X = np.asarray(X, dtype=float).ravel()
         self.y = np.asarray(y, dtype=float).ravel()
         if self.X.shape != self.y.shape:
@@ -86,7 +95,9 @@ class BayesianNNRegression:
         self.dim = 3 * self.H + 1
 
     # -- parameter (un)packing -------------------------------------------
-    def _unpack(self, theta):
+    def _unpack(
+        self, theta: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """(n_chains, dim) -> W1, b1, w2 each (n_chains, H); b2 (n_chains,)."""
         theta = np.atleast_2d(theta)
         H = self.H
@@ -97,7 +108,7 @@ class BayesianNNRegression:
         return W1, b1, w2, b2
 
     # -- forward pass -----------------------------------------------------
-    def forward(self, theta, X=None):
+    def forward(self, theta: np.ndarray, X: np.ndarray | None = None) -> np.ndarray:
         """Network output for every chain at every input.
 
         Returns an array of shape ``(n_chains, n_points)``. ``X`` defaults to
@@ -111,7 +122,7 @@ class BayesianNNRegression:
         return np.einsum("ch,chi->ci", w2, z) + b2[:, None]
 
     # -- target protocol --------------------------------------------------
-    def logpdf(self, theta):
+    def logpdf(self, theta: np.ndarray) -> np.ndarray:
         theta = np.atleast_2d(theta)
         f = self.forward(theta)  # (C, N)
         resid = self.y[None, :] - f
@@ -120,7 +131,7 @@ class BayesianNNRegression:
             - 0.5 * np.sum(theta**2, axis=1) / self.prior_var
         )
 
-    def grad_logpdf(self, theta):
+    def grad_logpdf(self, theta: np.ndarray) -> np.ndarray:
         theta = np.atleast_2d(theta)
         W1, b1, w2, b2 = self._unpack(theta)
         x = self.X
@@ -143,7 +154,12 @@ class BayesianNNRegression:
         return grad - theta / self.prior_var  # add the Gaussian-prior gradient
 
     # -- convenience for experiments -------------------------------------
-    def posterior_predictive(self, samples, X_grid, include_noise=False):
+    def posterior_predictive(
+        self,
+        samples: np.ndarray,
+        X_grid: np.ndarray,
+        include_noise: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Predictive mean and std over ``X_grid`` from posterior weight draws.
 
         ``samples`` is an ``(n_chains, n_samples, dim)`` array (a
@@ -161,7 +177,13 @@ class BayesianNNRegression:
         return mean, np.sqrt(var)
 
 
-def train_map(model, x0, n_steps=3000, lr=0.01, rng=None):
+def train_map(
+    model: BayesianNNRegression,
+    x0: np.ndarray,
+    n_steps: int = 3000,
+    lr: float = 0.01,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
     """MAP point estimate(s) by Adam ascent on the log-posterior.
 
     The single point estimate and every member of a deep ensemble are the same
@@ -210,7 +232,12 @@ def train_map(model, x0, n_steps=3000, lr=0.01, rng=None):
     return theta
 
 
-def make_gapped_sine(rng, n=40, noise_std=0.1, gap=(-0.5, 0.5)):
+def make_gapped_sine(
+    rng: np.random.Generator,
+    n: int = 40,
+    noise_std: float = 0.1,
+    gap: tuple[float, float] = (-0.5, 0.5),
+) -> tuple[np.ndarray, np.ndarray]:
     """1D toy: y = sin(3x) sampled on [-2, 2] with a hole cut out of the middle.
 
     The gap is the point of the demo -- a Bayesian posterior should report

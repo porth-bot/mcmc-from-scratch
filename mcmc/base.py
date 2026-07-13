@@ -14,7 +14,10 @@ All chains advance in lockstep as one batched NumPy computation, so running
 4 or 32 chains costs nearly the same wall-clock per iteration.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -38,7 +41,7 @@ class SamplerResult:
 
     samples: np.ndarray
     accept_rate: np.ndarray
-    extras: dict = field(default_factory=dict)
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @property
     def n_chains(self) -> int:

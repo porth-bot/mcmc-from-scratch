@@ -16,6 +16,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      # tests need only numpy + pytest; matplotlib is experiments-only
-      - run: pip install -e . pytest
+      # tests need only numpy + pytest; matplotlib is experiments-only.
+      # mypy is added for the type-check step below (numpy ships its own stubs).
+      - run: pip install -e . pytest "mypy>=1.8"
       - run: pytest -q
+      # Static type check of the public package. Run only on 3.12: the mypy
+      # step consumes numpy's bundled stubs, which now use 3.12-only syntax.
+      - name: type check (mypy)
+        if: matrix.python-version == '3.12'
+        run: mypy

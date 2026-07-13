@@ -40,19 +40,32 @@ general one whose detailed-balance proof is in theory/derivations.md, Sec. 2;
 the only MALA-specific piece is the asymmetric proposal density ``_log_q``.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
 
 from .base import SamplerResult
 
 
-def _log_q(y, x, grad_x, step_size):
+def _log_q(
+    y: np.ndarray, x: np.ndarray, grad_x: np.ndarray, step_size: float
+) -> np.ndarray:
     """log q(y | x) for the Langevin proposal, up to the eps normalizer that
     cancels in the Hastings ratio. Batched over chains -> (n_chains,)."""
     mean = x + 0.5 * step_size**2 * grad_x
     return -np.sum((y - mean) ** 2, axis=1) / (2.0 * step_size**2)
 
 
-def mala(target, x0, n_samples, step_size, rng, n_warmup=0):
+def mala(
+    target: Any,
+    x0: np.ndarray,
+    n_samples: int,
+    step_size: float,
+    rng: np.random.Generator,
+    n_warmup: int = 0,
+) -> SamplerResult:
     """Run batched Metropolis-adjusted Langevin chains.
 
     Parameters

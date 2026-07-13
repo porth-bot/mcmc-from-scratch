@@ -16,12 +16,25 @@ eight-schools model in ``mcmc.models``), because full conditionals are a
 property of the model, not of the algorithm.
 """
 
+from __future__ import annotations
+
+from typing import Callable, Sequence
+
 import numpy as np
 
 from .base import SamplerResult
 
+UpdateFn = Callable[[dict[str, np.ndarray], np.random.Generator], dict[str, np.ndarray]]
 
-def gibbs(update_fns, init_state, n_samples, rng, n_warmup=0, store=None):
+
+def gibbs(
+    update_fns: Sequence[UpdateFn],
+    init_state: dict[str, np.ndarray],
+    n_samples: int,
+    rng: np.random.Generator,
+    n_warmup: int = 0,
+    store: Sequence[str] | None = None,
+) -> SamplerResult:
     """Run a systematic-scan Gibbs sampler over a batched state dict.
 
     Parameters
@@ -78,7 +91,7 @@ def gibbs(update_fns, init_state, n_samples, rng, n_warmup=0, store=None):
             for k in store:
                 samples[:, it - n_warmup, fields[k]] = state[k].reshape(n_chains, -1)
 
-    def unpack(s=samples):
+    def unpack(s: np.ndarray = samples) -> dict[str, np.ndarray]:
         return {k: s[..., sl] for k, sl in fields.items()}
 
     return SamplerResult(
@@ -88,7 +101,9 @@ def gibbs(update_fns, init_state, n_samples, rng, n_warmup=0, store=None):
     )
 
 
-def make_gaussian_gibbs_updates(mean, cov):
+def make_gaussian_gibbs_updates(
+    mean: np.ndarray, cov: np.ndarray
+) -> list[UpdateFn]:
     """Coordinatewise full-conditional updates for N(mean, cov).
 
     With precision P = Sigma^{-1}, the full conditional of coordinate i is
@@ -105,10 +120,12 @@ def make_gaussian_gibbs_updates(mean, cov):
     dim = mean.shape[0]
     cond_sd = 1.0 / np.sqrt(np.diag(P))
 
-    def make_update(i):
+    def make_update(i: int) -> UpdateFn:
         others = [j for j in range(dim) if j != i]
 
-        def update(state, rng):
+        def update(
+            state: dict[str, np.ndarray], rng: np.random.Generator
+        ) -> dict[str, np.ndarray]:
             x = state["x"]
             delta = x[:, others] - mean[others]
             cond_mean = mean[i] - (delta @ P[others, i]) / P[i, i]

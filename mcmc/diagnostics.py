@@ -20,10 +20,14 @@ before trusting any estimate:
    positive -- an adaptive, nearly assumption-free cutoff.
 """
 
+from __future__ import annotations
+
+from typing import Any, Sequence
+
 import numpy as np
 
 
-def autocorrelation(x, max_lag=None):
+def autocorrelation(x: np.ndarray, max_lag: int | None = None) -> np.ndarray:
     """Normalized autocorrelation rho_k of one or more scalar chains.
 
     x : (n,) or (m, n). For multiple chains, each chain is centered by its
@@ -46,7 +50,7 @@ def autocorrelation(x, max_lag=None):
     return acov / acov[0]
 
 
-def _geyer_tau(rho):
+def _geyer_tau(rho: np.ndarray) -> tuple[float, int]:
     """Geyer's initial monotone positive sequence estimate of tau from rho_k.
 
     Returns (tau, cutoff_lag): tau >= 1 and the last lag included in the sum
@@ -68,7 +72,7 @@ def _geyer_tau(rho):
     return tau, cutoff_lag
 
 
-def integrated_autocorr_time(x):
+def integrated_autocorr_time(x: np.ndarray) -> float:
     """Integrated autocorrelation time tau via Geyer's initial monotone
     positive sequence.
 
@@ -80,7 +84,7 @@ def integrated_autocorr_time(x):
     return tau
 
 
-def autocorr_summary(x, max_lag=None):
+def autocorr_summary(x: np.ndarray, max_lag: int | None = None) -> dict[str, Any]:
     """Everything an autocorrelation plot needs, as pure-NumPy data.
 
     Returns a dict with the lags and normalized autocorrelations rho_k (out to
@@ -107,8 +111,14 @@ def autocorr_summary(x, max_lag=None):
     }
 
 
-def plot_autocorrelation(x, ax=None, max_lag=None, label=None, color=None,
-                         show_cutoff=True):
+def plot_autocorrelation(
+    x: np.ndarray,
+    ax: Any = None,
+    max_lag: int | None = None,
+    label: str | None = None,
+    color: Any = None,
+    show_cutoff: bool = True,
+) -> Any:
     """Draw the autocorrelation function rho_k of a scalar chain(s).
 
     Marks the Geyer truncation lag (where tau's sum stops) and annotates the
@@ -136,7 +146,7 @@ def plot_autocorrelation(x, ax=None, max_lag=None, label=None, color=None,
     return ax
 
 
-def ess(x):
+def ess(x: np.ndarray) -> float:
     """Effective sample size of one scalar parameter across chains.
 
     x : (n,) or (m, n). ESS = (m * n) / tau, with tau estimated from
@@ -148,7 +158,7 @@ def ess(x):
     return m * n / integrated_autocorr_time(x)
 
 
-def tail_ess(x, prob=0.05):
+def tail_ess(x: np.ndarray, prob: float = 0.05) -> float:
     """Tail effective sample size (Vehtari et al. 2021, Sec. 4.3).
 
     The ordinary (bulk) ESS is computed from the raw draws and is dominated by
@@ -190,7 +200,9 @@ def tail_ess(x, prob=0.05):
     return float(min(lower, upper))
 
 
-def efficiency_summary(chains, seconds, n_evals):
+def efficiency_summary(
+    chains: np.ndarray, seconds: float, n_evals: int
+) -> dict[str, float]:
     """Compute-normalized efficiency of one scalar parameter.
 
     The raw ESS answers "how many independent draws is this worth"; to
@@ -232,7 +244,7 @@ def efficiency_summary(chains, seconds, n_evals):
     }
 
 
-def split_rhat(x):
+def split_rhat(x: np.ndarray) -> float:
     """Split-R-hat for one scalar parameter.
 
     x : (m, n). Each chain is split in half (2m chains of length n//2), so a
@@ -259,7 +271,9 @@ def split_rhat(x):
     return float(np.sqrt(var_plus / W))
 
 
-def summarize(samples, names=None):
+def summarize(
+    samples: np.ndarray, names: Sequence[str] | None = None
+) -> list[dict[str, Any]]:
     """Per-dimension diagnostic table for samples of shape (m, n, dim).
 
     Returns a list of dicts: mean, sd, bulk ESS, tail ESS, tau, split-R-hat per

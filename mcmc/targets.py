@@ -6,7 +6,10 @@ marginals) so sampler output can be checked against exact answers rather than
 eyeballed.
 """
 
+from __future__ import annotations
+
 import math
+from typing import Callable
 
 import numpy as np
 
@@ -23,7 +26,7 @@ class Gaussian:
     at scale you would keep L and use triangular solves instead.
     """
 
-    def __init__(self, mean, cov):
+    def __init__(self, mean: np.ndarray, cov: np.ndarray):
         self.mean = np.atleast_1d(np.asarray(mean, dtype=float))
         self.cov = np.atleast_2d(np.asarray(cov, dtype=float))
         self.dim = self.mean.shape[0]
@@ -33,16 +36,16 @@ class Gaussian:
         self._logdet = 2.0 * np.sum(np.log(np.diag(L)))
         self._lognorm = -0.5 * (self.dim * np.log(2.0 * np.pi) + self._logdet)
 
-    def logpdf(self, x):
+    def logpdf(self, x: np.ndarray) -> np.ndarray:
         delta = np.atleast_2d(x) - self.mean
         quad = np.einsum("ni,ij,nj->n", delta, self.precision, delta)
         return self._lognorm - 0.5 * quad
 
-    def grad_logpdf(self, x):
+    def grad_logpdf(self, x: np.ndarray) -> np.ndarray:
         delta = np.atleast_2d(x) - self.mean
         return -delta @ self.precision  # precision is symmetric
 
-    def sample(self, n, rng):
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Exact i.i.d. draws x = mu + L z, z ~ N(0, I). Used as a reference."""
         z = rng.standard_normal((n, self.dim))
         return self.mean + z @ self._chol.T
@@ -71,7 +74,7 @@ class GaussianMixture:
     a responsibility-weighted average of the per-component score functions.
     """
 
-    def __init__(self, weights, means, covs):
+    def __init__(self, weights: np.ndarray, means: np.ndarray, covs: np.ndarray):
         self.weights = np.asarray(weights, dtype=float)
         self.weights = self.weights / self.weights.sum()
         self.means = np.atleast_2d(np.asarray(means, dtype=float))
@@ -88,19 +91,19 @@ class GaussianMixture:
         ])
         self._logw = np.log(self.weights)
 
-    def _log_components(self, x):
+    def _log_components(self, x: np.ndarray) -> np.ndarray:
         """Per-component log(w_k N_k(x)); shape (n_chains, n_comp)."""
         x = np.atleast_2d(x)
         delta = x[:, None, :] - self.means[None, :, :]        # (n, K, d)
         quad = np.einsum("nki,kij,nkj->nk", delta, self._prec, delta)
         return self._logw[None, :] + self._lognorm[None, :] - 0.5 * quad
 
-    def logpdf(self, x):
+    def logpdf(self, x: np.ndarray) -> np.ndarray:
         lc = self._log_components(x)
         m = lc.max(axis=1, keepdims=True)
         return (m[:, 0] + np.log(np.sum(np.exp(lc - m), axis=1)))
 
-    def grad_logpdf(self, x):
+    def grad_logpdf(self, x: np.ndarray) -> np.ndarray:
         lc = self._log_components(x)
         r = np.exp(lc - lc.max(axis=1, keepdims=True))
         r = r / r.sum(axis=1, keepdims=True)                  # responsibilities (n, K)
@@ -108,10 +111,10 @@ class GaussianMixture:
         scores = -np.einsum("kij,nkj->nki", self._prec, delta)  # per-comp score (n,K,d)
         return np.einsum("nk,nki->ni", r, scores)
 
-    def mean(self):
+    def mean(self) -> np.ndarray:
         return self.weights @ self.means
 
-    def cov(self):
+    def cov(self) -> np.ndarray:
         """Exact covariance: sum_k w_k (Sigma_k + mu_k mu_k^T) - mu mu^T."""
         mu = self.mean()
         second = sum(
@@ -120,7 +123,7 @@ class GaussianMixture:
         )
         return second - np.outer(mu, mu)
 
-    def sample(self, n, rng):
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Exact draws: pick a component by weight, then sample it."""
         comp = rng.choice(self.n_comp, size=n, p=self.weights)
         out = np.empty((n, self.dim))
@@ -152,7 +155,7 @@ class NealsFunnel:
     d log p / dx_i = -x_i e^{-v}
     """
 
-    def __init__(self, dim=10, sigma_v=3.0):
+    def __init__(self, dim: int = 10, sigma_v: float = 3.0):
         if dim < 2:
             raise ValueError("funnel needs dim >= 2 (one v plus at least one x)")
         self.dim = dim
@@ -163,7 +166,7 @@ class NealsFunnel:
     # correct outcome -- silence only the warning (see mcmc.models for the
     # same pattern, explained).
 
-    def logpdf(self, z):
+    def logpdf(self, z: np.ndarray) -> np.ndarray:
         z = np.atleast_2d(z)
         v, x = z[:, 0], z[:, 1:]
         sumsq = np.sum(x * x, axis=1)
@@ -177,7 +180,7 @@ class NealsFunnel:
                 - 0.5 * np.log(2.0 * np.pi * self.sigma_v**2)
             )
 
-    def grad_logpdf(self, z):
+    def grad_logpdf(self, z: np.ndarray) -> np.ndarray:
         z = np.atleast_2d(z)
         v, x = z[:, 0], z[:, 1:]
         with np.errstate(over="ignore", invalid="ignore"):
@@ -191,7 +194,7 @@ class NealsFunnel:
             g[:, 1:] = -x * e_neg_v[:, None]
         return g
 
-    def sample(self, n, rng):
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Exact draws via the generative process (v first, then x | v)."""
         v = rng.standard_normal(n) * self.sigma_v
         x = rng.standard_normal((n, self.dim - 1)) * np.exp(0.5 * v)[:, None]
@@ -233,7 +236,7 @@ class Rosenbrock:
 
     dim = 2
 
-    def __init__(self, a=1.0, b=10.0):
+    def __init__(self, a: float = 1.0, b: float = 10.0):
         # b sets the ridge thinness: x2|x1 has sd 1/sqrt(2b). b=10 is a clearly
         # curved but sample-able banana; the classic Rosenbrock uses b=100, a
         # ridge so thin that fixed-step HMC struggles badly (that is the point).
@@ -247,13 +250,13 @@ class Rosenbrock:
     # Metropolis step (the correct outcome), so only the warning is silenced --
     # the same pattern used by NealsFunnel above.
 
-    def logpdf(self, x):
+    def logpdf(self, x: np.ndarray) -> np.ndarray:
         x = np.atleast_2d(x)
         x1, x2 = x[:, 0], x[:, 1]
         with np.errstate(over="ignore", invalid="ignore"):
             return self._lognorm - (x1 - self.a) ** 2 - self.b * (x2 - x1**2) ** 2
 
-    def grad_logpdf(self, x):
+    def grad_logpdf(self, x: np.ndarray) -> np.ndarray:
         x = np.atleast_2d(x)
         x1, x2 = x[:, 0], x[:, 1]
         g = np.empty_like(x)
@@ -263,7 +266,7 @@ class Rosenbrock:
             g[:, 1] = -2.0 * self.b * resid
         return g
 
-    def moments(self):
+    def moments(self) -> tuple[np.ndarray, np.ndarray]:
         """Exact (mean, cov) from the closed-form marginal/conditional above."""
         a, b = self.a, self.b
         mean = np.array([a, a**2 + 0.5])
@@ -272,7 +275,7 @@ class Rosenbrock:
         )
         return mean, cov
 
-    def sample(self, n, rng):
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Exact draws: x1 ~ N(a, 1/2), then x2 | x1 ~ N(x1^2, 1/(2b))."""
         x1 = self.a + rng.standard_normal(n) / np.sqrt(2.0)
         x2 = x1**2 + rng.standard_normal(n) / np.sqrt(2.0 * self.b)
@@ -308,7 +311,7 @@ class StudentT:
     w ~ chi^2_nu, L = chol(Sigma).
     """
 
-    def __init__(self, mean, scale, dof):
+    def __init__(self, mean: np.ndarray, scale: np.ndarray, dof: float):
         self.mean = np.atleast_1d(np.asarray(mean, dtype=float))
         self.scale = np.atleast_2d(np.asarray(scale, dtype=float))
         self.dof = float(dof)
@@ -325,36 +328,38 @@ class StudentT:
             - 0.5 * self._logdet
         )
 
-    def _quad(self, x):
+    def _quad(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         delta = np.atleast_2d(x) - self.mean
         return np.einsum("ni,ij,nj->n", delta, self.precision, delta), delta
 
-    def logpdf(self, x):
+    def logpdf(self, x: np.ndarray) -> np.ndarray:
         q, _ = self._quad(x)
         d, nu = self.dim, self.dof
         return self._lognorm - 0.5 * (nu + d) * np.log1p(q / nu)
 
-    def grad_logpdf(self, x):
+    def grad_logpdf(self, x: np.ndarray) -> np.ndarray:
         q, delta = self._quad(x)
         d, nu = self.dim, self.dof
         coeff = -((nu + d) / nu) / (1.0 + q / nu)          # (n,)
         return coeff[:, None] * (delta @ self.precision)   # precision symmetric
 
-    def moments(self):
+    def moments(self) -> tuple[np.ndarray, np.ndarray]:
         """Exact (mean, cov); cov requires nu > 2 (else raises)."""
         if self.dof <= 2.0:
             raise ValueError("covariance is undefined for dof <= 2")
         cov = self.dof / (self.dof - 2.0) * self.scale
         return self.mean.copy(), cov
 
-    def sample(self, n, rng):
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Exact draws via the Gaussian scale mixture (chi^2 mixing)."""
         z = rng.standard_normal((n, self.dim))
         w = rng.chisquare(self.dof, size=n)
         return self.mean + (z @ self._chol.T) * np.sqrt(self.dof / w)[:, None]
 
 
-def finite_difference_grad(logpdf, x, eps=1e-6):
+def finite_difference_grad(
+    logpdf: Callable[[np.ndarray], np.ndarray], x: np.ndarray, eps: float = 1e-6
+) -> np.ndarray:
     """Central-difference gradient of a batched logpdf, for gradient checks.
 
     (f(x + eps e_i) - f(x - eps e_i)) / (2 eps) has O(eps^2) truncation error;

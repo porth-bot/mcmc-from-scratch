@@ -41,12 +41,16 @@ and mobility never reaches the cold chain -- ``extras['swap_rates']`` reports
 the per-pair acceptance to diagnose exactly that.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
 
 from .base import SamplerResult
 
 
-def geometric_ladder(n_replicas, beta_min=0.01):
+def geometric_ladder(n_replicas: int, beta_min: float = 0.01) -> np.ndarray:
     """Inverse temperatures 1 = beta_0 > ... > beta_{K-1} = beta_min, spaced
     geometrically. A geometric ladder keeps the overlap between adjacent
     tempered densities roughly constant, the usual first choice."""
@@ -56,8 +60,15 @@ def geometric_ladder(n_replicas, beta_min=0.01):
 
 
 def parallel_tempering(
-    target, x0, n_samples, step_sizes, betas, rng, n_warmup=0, swap_every=1
-):
+    target: Any,
+    x0: np.ndarray,
+    n_samples: int,
+    step_sizes: np.ndarray,
+    betas: np.ndarray,
+    rng: np.random.Generator,
+    n_warmup: int = 0,
+    swap_every: int = 1,
+) -> SamplerResult:
     """Run replica-exchange MCMC and return the cold (beta = 1) chain.
 
     Parameters

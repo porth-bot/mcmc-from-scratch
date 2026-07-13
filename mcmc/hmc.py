@@ -30,6 +30,10 @@ in Hoffman & Gelman 2014, Algorithm 5), driving the mean acceptance
 probability to ``target_accept``.
 """
 
+from __future__ import annotations
+
+from typing import Any, Callable
+
 import numpy as np
 
 from .base import SamplerResult
@@ -37,7 +41,13 @@ from .base import SamplerResult
 DIVERGENCE_DELTA_H = 25.0  # exp(-25) ~ 1e-11: trajectory left the typical set
 
 
-def leapfrog(grad_logpdf, x, p, step_size, n_steps):
+def leapfrog(
+    grad_logpdf: Callable[[np.ndarray], np.ndarray],
+    x: np.ndarray,
+    p: np.ndarray,
+    step_size: float,
+    n_steps: int,
+) -> tuple[np.ndarray, np.ndarray]:
     """Integrate Hamilton's equations with the leapfrog (Stormer-Verlet) scheme.
 
     dx/dt = p,   dp/dt = -grad U(x) = +grad log pi(x)
@@ -67,17 +77,17 @@ def leapfrog(grad_logpdf, x, p, step_size, n_steps):
 
 
 def hmc(
-    target,
-    x0,
-    n_samples,
-    step_size,
-    n_leapfrog,
-    rng,
-    n_warmup=0,
-    adapt_step_size=False,
-    target_accept=0.8,
-    jitter=0.2,
-):
+    target: Any,
+    x0: np.ndarray,
+    n_samples: int,
+    step_size: float,
+    n_leapfrog: int,
+    rng: np.random.Generator,
+    n_warmup: int = 0,
+    adapt_step_size: bool = False,
+    target_accept: float = 0.8,
+    jitter: float = 0.2,
+) -> SamplerResult:
     """Run batched HMC chains with identity mass matrix.
 
     Parameters
