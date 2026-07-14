@@ -383,6 +383,89 @@ within-chain nonstationarity). $\hat R \approx 1$ is necessary, never
 sufficient — the funnel RWMH run reaches $\hat R = 1.04$ while missing the
 neck entirely, which is why the exact marginal check matters.
 
+### 6.3 Thinning wastes information
+
+Folklore says: the draws are autocorrelated, so keep every $k$-th and discard
+the rest. For *accuracy* this is always a loss. Correlated draws are worth
+less than independent ones — that is exactly what $\tau$ measures — but they
+are not worth *nothing*, and thinning throws away the value they had.
+
+For AR(1) the cost is exact. With $\rho_j = \rho^j$, $\rho \in [0,1)$, Sec. 6.1
+gives $\tau = (1+\rho)/(1-\rho)$ and
+
+$$\operatorname{Var}(\bar x_N) = \frac{\sigma^2}{N}\cdot\frac{1+\rho}{1-\rho}.$$
+
+Now thin by $k$. A Markov chain observed every $k$ steps is still a Markov
+chain, and the kept draws are themselves AR(1) with lag-1 correlation
+$\rho^k$ — of which there are only $N/k$. So
+
+$$\operatorname{Var}(\bar x_{N/k}) = \frac{\sigma^2 k}{N}\cdot\frac{1+\rho^k}{1-\rho^k},
+\qquad
+R(\rho,k) \;\equiv\; \frac{\operatorname{Var}(\text{thinned mean})}{\operatorname{Var}(\text{full mean})}
+\;=\; k\,\frac{(1+\rho^k)(1-\rho)}{(1-\rho^k)(1+\rho)}.$$
+
+**Claim: $R \ge 1$ for every $k \ge 1$, with equality only at $k = 1$.**
+Write $\rho = e^{-\lambda}$, $\lambda > 0$. Then
+$\frac{1+\rho^k}{1-\rho^k} = \coth(\lambda k/2)$, so
+
+$$R(k) = \frac{k \coth(\lambda k / 2)}{\coth(\lambda / 2)}.$$
+
+It suffices that $u \mapsto u\coth(\lambda u/2)$ is increasing on $u>0$.
+Substituting $v = \lambda u/2$, this is $v \mapsto v \coth v$ up to a positive
+constant, and
+
+$$\frac{d}{dv}\big(v \coth v\big) = \frac{\sinh v\cosh v - v}{\sinh^2 v}
+= \frac{\tfrac12\sinh(2v) - v}{\sinh^2 v} > 0,$$
+
+since $\sinh(2v) > 2v$ for all $v > 0$. Hence $R(k) \ge R(1) = 1$. $\square$
+
+Two limits organize the picture:
+
+| regime | $R$ | reading |
+|---|---|---|
+| $\rho = 0$ (independent draws) | $R = k$ exactly | pure waste: discard $k-1$ of every $k$ good samples, inflate the variance by exactly $k$ |
+| $\rho \to 1$ (very sticky chain) | $R \to 1$ | nearly free — the discarded draws *were* near-duplicates. Still not an improvement. |
+
+So the cost of thinning is **largest exactly where it is least often
+proposed** (a fast-mixing chain) and smallest where the chain is so sticky the
+draws really were redundant. There is no regime in which it improves accuracy.
+
+Measured (`experiments/thinning.py`, `diagnostics.thinning_variance_ratio`).
+Part 1 brute-forces $\operatorname{Var}(\bar x)$ over 4000 independent AR(1)
+chains at $\rho = 0.9$ ($\tau = 19$):
+
+| $k$ | draws kept | ESS | $R$ predicted | $R$ measured |
+|---|---|---|---|---|
+| 1 | 2000 | 440,142 | 1.000 | 1.000 |
+| 5 | 400 | 431,103 | 1.022 | 1.025 |
+| 10 | 200 | 406,599 | 1.090 | 1.101 |
+| 20 | 100 | 328,111 | 1.344 | 1.386 |
+
+Part 2 asks whether the formula survives contact with a *real* sampler. It
+should not obviously: a Metropolis chain repeats its state on rejection, so its
+autocorrelation is not a clean geometric $\rho^j$ and it is not AR(1). Running
+RWMH on the correlated Gaussian (accept 0.485, $\tau = 47.2$, measured lag-1
+$\hat\rho = 0.944$) and feeding that $\hat\rho$ to the AR(1) formula:
+
+| $k$ | ESS | $R$ measured | $R$ predicted |
+|---|---|---|---|
+| 1 | 16,954 | 1.000 | 1.000 |
+| 5 | 16,841 | 1.007 | 1.007 |
+| 10 | 16,541 | 1.025 | 1.027 |
+| 20 | 15,587 | 1.088 | 1.108 |
+
+— within a couple of percent throughout. Note the honest magnitude: at
+$\rho \approx 0.94$, thinning by 5 costs under 1%. The point is not that
+thinning is catastrophic on a sticky chain; it is that the cost is *never
+negative*, and it becomes large precisely when the chain mixes well.
+
+**When thinning is legitimate**: when the binding constraint is cost rather
+than accuracy — RAM or disk for a long high-dimensional run, or an expensive
+per-draw post-processing step (each retained draw seeding a downstream
+simulation). Then $R$ is the exchange rate, and you are knowingly buying a
+cheaper pipeline with a quantified amount of precision. What is not defensible
+is thinning in the belief that it makes the answer better.
+
 ## References
 
 - Metropolis, Rosenbluth, Rosenbluth, Teller & Teller (1953), *J. Chem. Phys.* 21.

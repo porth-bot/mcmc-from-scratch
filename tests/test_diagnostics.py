@@ -17,6 +17,7 @@ from mcmc.diagnostics import (
     plot_autocorrelation,
     split_rhat,
     tail_ess,
+    thinning_variance_ratio,
 )
 
 
@@ -170,3 +171,69 @@ def test_plot_autocorrelation_draws_the_summary_curve():
     np.testing.assert_allclose(line.get_ydata(), s["rho"])
     np.testing.assert_array_equal(line.get_xdata(), s["lags"])
     plt.close("all")
+
+
+# ---------------------------------------------------------------------------
+# Thinning (Sec. 6.3): the closed form, its limits, and the empirical check
+# ---------------------------------------------------------------------------
+def test_thinning_ratio_is_one_when_not_thinning():
+    for rho in (0.0, 0.5, 0.95):
+        assert thinning_variance_ratio(rho, 1) == pytest.approx(1.0)
+
+
+def test_thinning_always_costs_and_costs_more_the_more_you_thin():
+    """R > 1 for k > 1, and monotone increasing in k -- thinning never helps."""
+    for rho in (0.0, 0.3, 0.7, 0.9, 0.99):
+        ratios = [thinning_variance_ratio(rho, k) for k in range(1, 21)]
+        assert all(r > 1.0 for r in ratios[1:])
+        assert all(b > a for a, b in zip(ratios, ratios[1:]))  # strictly increasing
+
+
+def test_thinning_iid_draws_wastes_exactly_the_factor_you_discard():
+    # rho = 0: keeping 1 in k independent draws inflates the variance by k.
+    for k in (2, 5, 10):
+        assert thinning_variance_ratio(0.0, k) == pytest.approx(float(k))
+
+
+def test_thinning_a_very_sticky_chain_is_nearly_free_but_never_helps():
+    # rho -> 1: the discarded draws were near-duplicates, so R -> 1 from above.
+    assert thinning_variance_ratio(0.999, 5) == pytest.approx(1.0, abs=0.02)
+    assert thinning_variance_ratio(0.999, 5) > 1.0
+
+
+def test_thinning_rejects_bad_arguments():
+    with pytest.raises(ValueError):
+        thinning_variance_ratio(1.0, 2)  # rho must be < 1
+    with pytest.raises(ValueError):
+        thinning_variance_ratio(-0.1, 2)
+    with pytest.raises(ValueError):
+        thinning_variance_ratio(0.5, 0)  # k >= 1
+
+
+def test_thinning_ratio_matches_the_empirical_variance_of_the_mean():
+    """The formula against brute force: 4000 independent AR(1) chains.
+
+    Estimate Var(sample mean) across replicates for the full chain and for the
+    thinned chain, and check the measured ratio matches the closed form. This
+    is the test that makes the closed form more than algebra on a page.
+    """
+    rng = np.random.default_rng(11)
+    rho, n_rep, n = 0.9, 4000, 2000
+    x = ar1(rho, n_rep, n, rng)  # (n_rep, n): each row an independent chain
+
+    var_full = np.var(x.mean(axis=1))
+    for k in (2, 5, 10):
+        var_thin = np.var(x[:, ::k].mean(axis=1))
+        empirical = var_thin / var_full
+        predicted = thinning_variance_ratio(rho, k)
+        assert empirical == pytest.approx(predicted, rel=0.10)
+
+
+def test_thinning_ratio_matches_the_measured_ess_loss():
+    """ESS_thinned / ESS_full should be 1 / R, using the repo's own estimator."""
+    rng = np.random.default_rng(12)
+    rho = 0.8
+    x = ar1(rho, 4, 100_000, rng)
+    for k in (2, 5):
+        measured = ess(x[:, ::k]) / ess(x)
+        assert measured == pytest.approx(1.0 / thinning_variance_ratio(rho, k), rel=0.10)

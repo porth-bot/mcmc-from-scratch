@@ -200,6 +200,76 @@ def tail_ess(x: np.ndarray, prob: float = 0.05) -> float:
     return float(min(lower, upper))
 
 
+def thinning_variance_ratio(rho: float, k: int) -> float:
+    """How much thinning an AR(1) chain by ``k`` inflates Var(mean). Always >= 1.
+
+    Thinning -- keeping every k-th draw and discarding the rest -- is folklore
+    ("the samples are correlated, so subsample them until they aren't"). For
+    *accuracy* it is always a loss, and for AR(1) the loss has a closed form.
+
+    Take a stationary AR(1) chain with lag-1 correlation ``rho`` in [0, 1). Its
+    autocorrelations are ``rho_j = rho^j``, so (Sec. 6.1)
+
+        tau = 1 + 2 sum_{j>=1} rho^j = (1 + rho) / (1 - rho),
+        Var(mean of N draws) = (sigma^2 / N) * (1 + rho)/(1 - rho).
+
+    Thin by ``k``: the kept draws are *themselves* an AR(1) chain with lag-1
+    correlation ``rho^k`` (a Markov chain observed every k steps still is one),
+    and there are only ``N / k`` of them. So
+
+        Var(mean of the thinned chain) = (sigma^2 k / N) * (1 + rho^k)/(1 - rho^k),
+
+    and the ratio of the two -- what this function returns -- is
+
+        R(rho, k) = k * (1 + rho^k) (1 - rho) / [ (1 - rho^k) (1 + rho) ].
+
+    R >= 1 for every k >= 1, with equality only at k = 1. Proof: write
+    ``rho = exp(-lambda)``, so ``(1 + rho^k)/(1 - rho^k) = coth(lambda k / 2)``
+    and ``R = [k coth(lambda k/2)] / coth(lambda/2)``. The function
+    ``v -> v coth(v)`` is increasing on v > 0, because its derivative
+    ``(sinh v cosh v - v) / sinh^2 v`` is positive whenever ``sinh(2v) > 2v``,
+    which holds for all v > 0. Hence ``u -> u coth(lambda u / 2)`` is increasing
+    in u, so ``R(k) >= R(1) = 1``. Thinning never helps and generally hurts.
+
+    Two limits worth knowing, both reproduced in the tests:
+
+    - ``rho = 0`` (independent draws): R = k exactly. Thinning throws away
+      k - 1 of every k perfectly good samples, and the variance inflates by
+      exactly that factor. This is the pure-waste case.
+    - ``rho -> 1`` (an extremely sticky chain): R -> 1. Thinning a chain whose
+      autocorrelation time is far longer than the thinning interval costs
+      almost nothing -- because the discarded draws were nearly duplicates
+      anyway. It still does not *help*.
+
+    So the honest summary is: thinning trades accuracy for storage, and the
+    trade is only near-free in the regime where the chain is badly mixing. The
+    legitimate reasons to thin are about *cost* -- memory, disk, or an expensive
+    per-draw post-processing step (a downstream simulation per sample) -- never
+    about accuracy. If you can afford to keep the draws, keep them. See
+    ``theory/derivations.md`` Sec. 6.3 and ``experiments/thinning.py``, which
+    checks this formula against both simulated AR(1) chains and a real RWMH run.
+
+    Parameters
+    ----------
+    rho : lag-1 autocorrelation in [0, 1).
+    k : thinning interval, an integer >= 1.
+
+    Returns
+    -------
+    The variance-inflation factor R(rho, k) = Var(thinned mean) / Var(full mean).
+    Equivalently ESS_thinned / ESS_full = 1 / R.
+    """
+    if not 0.0 <= rho < 1.0:
+        raise ValueError("rho must be in [0, 1)")
+    k = int(k)
+    if k < 1:
+        raise ValueError("k must be >= 1")
+    if k == 1:
+        return 1.0
+    q = rho ** k
+    return float(k * (1.0 + q) * (1.0 - rho) / ((1.0 - q) * (1.0 + rho)))
+
+
 def efficiency_summary(
     chains: np.ndarray, seconds: float, n_evals: int
 ) -> dict[str, float]:
