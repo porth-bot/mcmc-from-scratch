@@ -14,6 +14,19 @@ resampling one block of a state dict from its full conditional. Conditionals
 live with their models (see ``make_gaussian_gibbs_updates`` below and the
 eight-schools model in ``mcmc.models``), because full conditionals are a
 property of the model, not of the algorithm.
+
+Two scan orders are supported (``scan=``). *Systematic* (deterministic) scan
+applies the updates in a fixed order every sweep; its transition kernel is the
+*composition* K_d ... K_2 K_1 of the per-block kernels, which is not
+reversible (the order matters) but leaves pi invariant. *Random* scan picks a
+block uniformly at random at each sub-step; its kernel is the *mixture*
+(1/d) sum_i K_i, which is reversible when each K_i is. Both are correct -- a
+composition or a mixture of pi-invariant kernels is pi-invariant -- but they
+mix at different rates, and which wins is target-dependent (Roberts & Sahu
+1997). To keep the comparison fair, one recorded sweep does the same number of
+block updates (``len(update_fns)``) under either scan, so effective sample
+size *per unit work* is directly comparable; ``experiments/gibbs_scan.py``
+measures it on the correlated Gaussian.
 """
 
 from __future__ import annotations
@@ -34,19 +47,26 @@ def gibbs(
     rng: np.random.Generator,
     n_warmup: int = 0,
     store: Sequence[str] | None = None,
+    scan: str = "systematic",
 ) -> SamplerResult:
-    """Run a systematic-scan Gibbs sampler over a batched state dict.
+    """Run a Gibbs sampler over a batched state dict.
 
     Parameters
     ----------
     update_fns : sequence of callables ``f(state, rng) -> state``
         Each resamples one block from its full conditional given the rest.
-        Applied in fixed order each iteration (systematic scan). Each kernel
-        leaves pi invariant, so their composition does too.
+        Each kernel leaves pi invariant, so any composition or mixture does too.
     init_state : dict[str, ndarray]
         Batched over chains in the leading axis, e.g. ``{"theta": (m, J), "tau2": (m,)}``.
     store : list[str] or None
         Keys to record (default: all).
+    scan : {"systematic", "random"}
+        Sweep order. ``"systematic"`` (default) applies the updates in the
+        given fixed order each sweep (the composition kernel). ``"random"``
+        draws ``len(update_fns)`` block indices uniformly *with replacement*
+        each sweep and applies those (the mixture kernel, iterated). Both do
+        ``len(update_fns)`` block updates per recorded sweep, so ESS per unit
+        work is comparable; see the module docstring for correctness.
 
     Returns
     -------
@@ -72,9 +92,12 @@ def gibbs(
     >>> res.accept_rate.tolist()   # Gibbs accepts every full-conditional proposal
     [1.0, 1.0, 1.0, 1.0]
     """
+    if scan not in ("systematic", "random"):
+        raise ValueError(f"scan must be 'systematic' or 'random', got {scan!r}")
     state = {k: np.array(v, dtype=float, copy=True) for k, v in init_state.items()}
     store = list(store) if store is not None else list(state.keys())
     n_chains = next(iter(state.values())).shape[0]
+    n_updates = len(update_fns)
 
     # column layout for flattening the state dict into a samples matrix
     fields, start = {}, 0
@@ -85,8 +108,12 @@ def gibbs(
 
     samples = np.empty((n_chains, n_samples, start))
     for it in range(n_warmup + n_samples):
-        for f in update_fns:
-            state = f(state, rng)
+        if scan == "systematic":
+            for f in update_fns:
+                state = f(state, rng)
+        else:  # random scan: n_updates uniformly-chosen blocks, with replacement
+            for j in rng.integers(0, n_updates, size=n_updates):
+                state = update_fns[j](state, rng)
         if it >= n_warmup:
             for k in store:
                 samples[:, it - n_warmup, fields[k]] = state[k].reshape(n_chains, -1)
