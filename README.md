@@ -313,6 +313,28 @@ Neal (2003) (funnel); Rubin (1981) (data); Betancourt (2017) arXiv:1701.02434;
 Foreman-Mackey et al. (2013) PASP (emcee, the external-benchmark baseline).
 Full list with roles in [`theory/derivations.md`](theory/derivations.md).
 
+## Part of a from-scratch series
+
+Same bar in each: the core written out by hand, every non-obvious claim checked
+against a closed form or an independent oracle, limitations stated rather than
+buried.
+
+| Repo | Built from scratch |
+| --- | --- |
+| **mcmc-from-scratch** *(this repo)* | Metropolis-Hastings, Gibbs, HMC, MALA, parallel tempering — validated against exact posteriors |
+| [gp-from-scratch](https://github.com/porth-bot/gp-from-scratch) | GP regression, kernels with hand-derived gradients, ML-II, and the NTK/NNGP wide-network correspondence |
+| [grokking-transformer](https://github.com/porth-bot/grokking-transformer) | A transformer that groks modular arithmetic, and the Fourier circuit it learns |
+| [pinn-from-scratch](https://github.com/porth-bot/pinn-from-scratch) | Physics-informed networks: exact autograd PDE residuals against closed-form solutions |
+
+The tie to gp-from-scratch is concrete, not decorative. Its NTK section shows
+that an *infinite*-width network's posterior is a Gaussian process with a
+closed-form mean and variance; section 5 here samples a *finite*-width
+network's weight posterior with HMC precisely because that closed form is gone
+— the same Bayesian question, on the two sides of the width limit. And the
+MALA sampler above is the bridge in the other direction: unadjusted annealed
+Langevin is that proposal minus the accept step, which is where score-based
+generative models start.
+
 ## Provenance
 
 Built as a study resource: implemented from scratch with AI assistance
