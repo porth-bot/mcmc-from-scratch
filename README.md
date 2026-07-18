@@ -48,7 +48,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 |---|---|
 | [`mcmc/metropolis.py`](mcmc/metropolis.py) | Random-walk MH, log-space accept, batched chains |
 | [`mcmc/gibbs.py`](mcmc/gibbs.py) | Systematic- **or** random-scan driver over state dicts + Gaussian full conditionals derived via the precision matrix. At matched work, systematic scan is ~2× more efficient than random scan on the correlated Gaussian ([`experiments/gibbs_scan.py`](experiments/gibbs_scan.py)) — random scan can leave a coordinate stale for a sweep |
-| [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), divergence tracking |
+| [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), optional **diagonal mass-matrix adaptation** from windowed warmup variances (Stan-style memoryless windows — a per-axis preconditioner so one step size fits an axis-aligned target of unequal scales), divergence tracking |
 | [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction — RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
 | [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), split-$\hat R$, compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
@@ -249,12 +249,61 @@ it** (Gibbs's cheap exact conditionals), and **reach for a gradient-free
 ensemble like emcee when deriving a gradient is impractical** — it is
 genuinely competitive per evaluation and needs nothing but the log-density.
 
+### 7. Diagonal mass-matrix adaptation (`experiments/mass_matrix.py`)
+
+Every HMC run above used the identity metric — one step size for every
+direction. On an axis-aligned target of unequal scales that single step size is
+squeezed by the *tightest* direction (leapfrog's stability limit is set by the
+largest curvature), so the *widest* direction is under-stepped and mixes slowly.
+The fix is a mass matrix $M$ with $K(p) = \tfrac12 p^\top M^{-1} p$, adapted so
+$M^{-1} = \operatorname{diag}(\text{marginal variances})$ — each coordinate is
+preconditioned to unit scale and one step size fits all of them (drift becomes
+`x += eps * inv_mass * p`; a diagonal rescale is still a shear, so exactness is
+untouched — derivation and the whitening argument in [theory](theory/derivations.md) §4.8).
+The diagonal is learned during warmup from Stan-style memoryless expanding
+windows, with the step-size dual averaging restarted after each metric change.
+
+**Anisotropy sweep**, diagonal Gaussian $N(0, \operatorname{diag}(1, r^2))$,
+wide-coordinate ESS per 1000 gradients (mean of 5 seeds; the two metrics share
+seeds, so the metric is the only difference):
+
+| scale ratio $r$ | identity metric | adapted diagonal | recovered $M^{-1}_{22}$ (true $r^2$) |
+|---|---|---|---|
+| 2  | 26.9 | 30.2 | 3.9 (4) |
+| 5  | **3.4** | 28.5 | 24.2 (25) |
+| 10 | 34.0 | 28.0 | 96.6 (100) |
+| 25 | 16.1 | 30.5 | 603 (625) |
+| 50 | **3.3** | 28.3 | 2395 (2500) |
+
+The adapted metric recovers the true variance and **whitens every $r$ to the
+same isotropic problem** — a flat $\approx 30$ ESS/1k-grad regardless of scale.
+The identity metric is at the mercy of the scale: its single step size resonates
+unpredictably with the wide direction (fixed-$L$ HMC), swinging from 3 to 34 with
+no reliability. The win is not a fixed multiplier — it is *scale-independence*.
+
+<p align="center"><img src="figures/mass_matrix_gain.png" width="440"></p>
+
+**Eight schools** (non-centered), ESS per 1000 gradients by coordinate:
+
+| coordinate | identity | adapted | gain |
+|---|---|---|---|
+| $\mu$ (wide) | 36.5 | 47.8 | 1.3× |
+| $\log\tau$ (funnel) | 9.1 | 21.5 | 2.4× |
+| $\eta_1$ | 3.2 | 47.8 | **14.8×** |
+
+The metric widens $\mu$ and the $\eta_j$ — the coordinates the unit step size
+under-served — driving them to near-independence ($\tau_{\text{int}}\to 1$, hence
+the shared ceiling of 47.8). But $\log\tau$ gains only 2.4×: **a diagonal metric
+rescales marginals, it cannot rotate**, so the funnel curvature in $(\log\tau,
+\eta)$ survives. That residual is exactly what a dense metric or NUTS is for
+(Days 17–18) — the honest limit of the cheap fix.
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 58 tests; RuntimeWarnings are errors
+pytest                          # 80 tests; RuntimeWarnings are errors
 cd experiments
 python validate_exact.py        # ~30 s
 python funnel.py                # ~2 min
@@ -262,6 +311,7 @@ python eight_schools.py         # ~1 min
 python tempering.py             # ~20 s  (bimodal: tempering vs a trapped chain)
 python bnn.py                   # ~1 min  (Bayesian NN: HMC vs ensemble vs MAP)
 python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
+python mass_matrix.py           # ~30 s  (diagonal metric: scale-free efficiency)
 ```
 
 `emcee` is used *only* by the external benchmark — it is not a dependency of the
