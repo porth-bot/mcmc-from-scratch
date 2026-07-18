@@ -128,7 +128,8 @@ H(x, p) = U(x) + K(p), \quad U = -\log\tilde\pi(x), \quad K = \tfrac12 \lVert p\
 Because $H$ separates, $x$ and $p$ are independent under the joint; the
 $x$-marginal is exactly $\pi$ and $p \sim N(0, I)$. Sampling the joint and
 discarding $p$ solves the original problem. (A general mass matrix $M$ gives
-$K = \tfrac12 p^\top M^{-1} p$; we use $M = I$.)
+$K = \tfrac12 p^\top M^{-1} p$ and $p \sim N(0, M)$; the default is $M = I$, and
+Sec. 4.8 adapts a diagonal $M$ as a preconditioner.)
 
 ### 4.2 Three properties of Hamiltonian flow
 
@@ -285,6 +286,67 @@ $\partial_{x_2}\log p = -2b\,(x_2 - x_1^2)$; `experiments/validate_exact.py`
 (Part C) checks HMC against these and shows the residual covariance error that a
 single step size leaves on the high-curvature arms — the motivation for
 mass-matrix adaptation and NUTS.
+
+### 4.8 Diagonal mass-matrix adaptation
+
+Sections 4.6–4.7 show unit-metric HMC losing to *geometry*. The cheapest partial
+fix is the mass matrix $M$. Keep $K(p) = \tfrac12 p^\top M^{-1} p$; then Hamilton's
+equations become $\dot x = M^{-1} p$, $\dot p = \nabla\log\tilde\pi(x)$, so the
+leapfrog *drift* carries the metric and the *kicks* do not:
+
+$$p_{1/2} = p_0 + \tfrac{\varepsilon}{2}\nabla\log\tilde\pi(x_0),\quad
+x_1 = x_0 + \varepsilon\, M^{-1} p_{1/2},\quad
+p_1 = p_{1/2} + \tfrac{\varepsilon}{2}\nabla\log\tilde\pi(x_1),$$
+
+with momentum refreshed from $p \sim N(0, M)$ and acceptance from
+$\Delta H = \Delta U + \tfrac12(p'^\top M^{-1} p' - p^\top M^{-1} p)$. A diagonal
+rescaling is still a shear composition, so volume preservation and reversibility
+(Sec. 4.3–4.4) — hence exactness — are untouched: $M$ changes *efficiency only*,
+never the stationary distribution. In code this is the single line
+`x += eps * inv_mass * p`, with `inv_mass` the diagonal of $M^{-1}$.
+
+**Why it is a preconditioner.** Take a separable quadratic
+$U = \sum_i x_i^2/(2\sigma_i^2)$, so the curvature along axis $i$ is $1/\sigma_i^2$.
+Leapfrog on a harmonic oscillator of frequency $\omega_i = \sqrt{(M^{-1})_{ii}/\sigma_i^2}$
+is stable only for $\varepsilon\,\omega_i < 2$, so a *single* $\varepsilon$ must
+respect the stiffest $\omega_i$ while the softest direction is then integrated far
+below its stability limit and drifts slowly. Choosing $(M^{-1})_{ii} = \sigma_i^2$
+makes every $\omega_i = 1$: all directions share one natural frequency, one step
+size fits all, and the trajectory traverses each coordinate at its own scale. This
+is exactly whitening — HMC with metric $M = \Sigma^{-1}$ on $x$ equals unit-metric
+HMC on $\Sigma^{-1/2}x$. The diagonal version whitens the *marginals*; it cannot
+rotate, so it leaves correlations (and the funnel/banana curvature of 4.6–4.7)
+uncorrected — that is what NUTS with a dense metric, or Riemannian HMC, is for.
+
+**Estimating it.** We want $(M^{-1})_{ii} = \operatorname{Var}_\pi[x_i]$, which we
+do not know a priori, so it is learned during warmup from the sample variances.
+Two practical points, both mirroring Stan:
+
+- *Memoryless expanding windows.* Warmup splits into an initial buffer (metric
+  fixed at $I$ while the chain first reaches the typical set), a sequence of
+  windows each ~2× the last, and a terminal buffer. Each window estimates a
+  *fresh* diagonal from only its own draws — early, pre-convergence samples are
+  discarded rather than averaged in — and the step-size dual averaging (Sec. 4.5)
+  is **restarted** after each metric change, because a new metric is a new
+  integrator whose optimal $\varepsilon$ differs. The terminal buffer re-tunes
+  $\varepsilon$ to the frozen final metric.
+- *Regularization.* A short window gives a noisy variance; we shrink it toward a
+  unit metric, $\hat v \leftarrow \tfrac{n}{n+5}\hat v + \tfrac{5}{n+5}\cdot 10^{-3}$,
+  so a degenerate window cannot emit a wild scale.
+
+Adaptation stops at the end of warmup for the same reason the step size freezes:
+a kernel that depends on the chain's own history is no longer $\pi$-invariant.
+
+**Measured (`experiments/mass_matrix.py`).** On diagonal Gaussians
+$N(0,\operatorname{diag}(1, r^2))$ the adapted metric recovers
+$(M^{-1})_{22}\approx r^2$ and whitens every $r$ to the *same* isotropic problem —
+a flat $\approx 30$ ESS per 1000 gradients independent of $r$ — while unit-metric
+HMC swings erratically ($\approx 3$–$34$) as its single step size resonates with
+the wide direction. On non-centered eight schools the diagonal metric drives the
+wide $\mu$ and the $\eta_j$ to near-independence ($\tau\to 1$, up to $15\times$ the
+unit-metric ESS/grad on $\eta_1$), but $\log\tau$ gains only $\sim 2.4\times$: the
+funnel is curvature the diagonal cannot touch, the honest limit that motivates
+Days 17–18 (NUTS).
 
 ## 5. The models
 
