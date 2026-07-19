@@ -9,12 +9,16 @@ import numpy as np
 import pytest
 
 from mcmc.diagnostics import (
+    _average_ranks,
+    _standard_normal_ppf,
     autocorr_summary,
     autocorrelation,
     efficiency_summary,
     ess,
     integrated_autocorr_time,
     plot_autocorrelation,
+    rank_normalize,
+    rank_normalized_rhat,
     split_rhat,
     tail_ess,
     thinning_variance_ratio,
@@ -118,6 +122,78 @@ def test_rhat_flags_unmixed_chains():
     x = rng.standard_normal((4, 5_000))
     x += np.array([0.0, 0.0, 3.0, 3.0])[:, None]  # two chains stuck elsewhere
     assert split_rhat(x) > 1.5
+
+
+def test_probit_matches_known_normal_quantiles():
+    # Phi^{-1} at values with exact/tabulated answers, including the far tails
+    # (where Acklam's raw approximation is weakest and the Halley step earns it).
+    p = np.array([1e-4, 0.025, 0.1, 0.5, 0.8413447460685429, 0.975, 1 - 1e-4])
+    known = np.array([-3.719016485455709, -1.959963984540054,
+                      -1.2815515594605868, 0.0, 1.0, 1.959963984540054,
+                      3.719016485455709])
+    np.testing.assert_allclose(_standard_normal_ppf(p), known, atol=1e-7)
+
+
+def test_average_ranks_share_the_mean_rank_within_ties():
+    # Repeated states (a Metropolis chain sits still on rejection) must not bias
+    # the rank transform: tied values get the average of the ranks they span.
+    a = np.array([10.0, 10.0, 20.0, 5.0, 5.0, 5.0])
+    # sorted: 5,5,5 (ranks 1,2,3 -> 2), 10,10 (ranks 4,5 -> 4.5), 20 (rank 6)
+    np.testing.assert_allclose(_average_ranks(a),
+                               [4.5, 4.5, 6.0, 2.0, 2.0, 2.0])
+
+
+def test_rank_normalized_draws_are_standard_normal():
+    # The Blom transform maps pooled draws of ANY continuous target onto ~N(0,1)
+    # scores; a heavy-tailed input is no exception (that is the robustness).
+    rng = np.random.default_rng(0)
+    z = rank_normalize(rng.standard_cauchy((4, 10_000)))
+    assert abs(z.mean()) < 0.02 and abs(z.std() - 1.0) < 0.02
+
+
+def test_rank_rhat_agrees_with_classic_on_well_mixed_gaussian():
+    # Where the classic statistic is valid, rank-R-hat must not disagree: both
+    # sit at ~1 for four mixed light-tailed chains.
+    rng = np.random.default_rng(3)
+    x = rng.standard_normal((4, 5_000))
+    assert split_rhat(x) < 1.01
+    assert rank_normalized_rhat(x)["rhat"] < 1.01
+
+
+def test_rank_rhat_flags_unmixed_gaussian_like_the_classic():
+    # It must still catch the easy case the classic statistic already catches.
+    rng = np.random.default_rng(4)
+    x = rng.standard_normal((4, 5_000)) + np.array([0.0, 0.0, 3.0, 3.0])[:, None]
+    assert rank_normalized_rhat(x)["rhat"] > 1.2
+
+
+def test_rank_rhat_catches_a_cauchy_location_shift_the_classic_misses():
+    # THE motivating case. Two of four Cauchy chains are shifted by 6 (three
+    # inter-quartile ranges): genuinely unmixed. But a standard Cauchy routinely
+    # throws draws of magnitude 50+, so the within-chain "variance" W is enormous
+    # and noisy and the shift vanishes into it -- classic split-R-hat reads ~1.00.
+    # Ranks are bounded, so the shift shows up cleanly in the bulk term.
+    rng = np.random.default_rng(0)
+    x = rng.standard_cauchy((4, 4_000)) + np.array([0.0, 0.0, 6.0, 6.0])[:, None]
+    assert split_rhat(x) < 1.01               # classic is fooled
+    r = rank_normalized_rhat(x)
+    assert r["bulk"] > 1.2                     # the location term catches it
+    assert r["rhat"] > 1.2
+
+
+def test_folded_rhat_catches_a_scale_difference_the_bulk_term_misses():
+    # Same median (0), different spread: two Cauchy chains at scale 1, two at
+    # scale 6. The rank/bulk term is blind to this (the rank distributions are
+    # symmetric about the pooled median either way), and so is the classic
+    # statistic. Folding to |x - median| turns the scale gap into a location gap
+    # of the absolute deviations, which the folded term then flags.
+    rng = np.random.default_rng(0)
+    x = rng.standard_cauchy((4, 4_000)) * np.array([1.0, 1.0, 6.0, 6.0])[:, None]
+    assert split_rhat(x) < 1.01               # classic is fooled
+    r = rank_normalized_rhat(x)
+    assert r["bulk"] < 1.05                    # so is the plain bulk term
+    assert r["folded"] > 1.1                   # only folding sees the scale gap
+    assert r["rhat"] == max(r["bulk"], r["folded"])
 
 
 def test_efficiency_summary_is_ess_normalized_by_cost():

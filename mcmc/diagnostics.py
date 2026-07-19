@@ -22,6 +22,7 @@ before trusting any estimate:
 
 from __future__ import annotations
 
+import math
 from typing import Any, Sequence
 
 import numpy as np
@@ -314,6 +315,128 @@ def efficiency_summary(
     }
 
 
+def _average_ranks(a: np.ndarray) -> np.ndarray:
+    """Ranks 1..N of a flat array, ties sharing their average rank.
+
+    Fractional (average) ranks are what Vehtari et al. use so that repeated
+    states -- a Metropolis chain sits still on every rejection, producing many
+    exact ties -- do not bias the rank transform toward whichever tied value
+    happened to be visited first. Pure NumPy (no scipy.stats.rankdata).
+    """
+    a = np.asarray(a, dtype=float).ravel()
+    n = a.size
+    order = np.argsort(a, kind="mergesort")
+    sa = a[order]
+    # group id per sorted position: increments only when the value changes,
+    # so all members of a tie group share one id.
+    is_new = np.empty(n, dtype=bool)
+    is_new[0] = True
+    is_new[1:] = sa[1:] != sa[:-1]
+    group = np.cumsum(is_new) - 1
+    ranks_1n = np.arange(1, n + 1, dtype=float)          # ranks in sorted order
+    group_sum = np.zeros(int(group[-1]) + 1)
+    np.add.at(group_sum, group, ranks_1n)
+    group_avg = group_sum / np.bincount(group)
+    avg_sorted = group_avg[group]
+    out = np.empty(n, dtype=float)
+    out[order] = avg_sorted
+    return out
+
+
+# Peter Acklam's rational approximation of the standard-normal quantile, then a
+# single Halley step against the exact CDF (via math.erfc) to reach machine
+# precision. Pure math/NumPy so the numpy-only package/CI stays dependency-free.
+_ACKLAM_A = (-3.969683028665376e01, 2.209460984245205e02, -2.759285104469687e02,
+             1.383577518672690e02, -3.066479806614716e01, 2.506628277459239e00)
+_ACKLAM_B = (-5.447609879822406e01, 1.615858368580409e02, -1.556989798598866e02,
+             6.680131188771972e01, -1.328068155288572e01)
+_ACKLAM_C = (-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e00,
+             -2.549732539343734e00, 4.374664141464968e00, 2.938163982698783e00)
+_ACKLAM_D = (7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e00,
+             3.754408661907416e00)
+
+
+def _standard_normal_ppf(p: np.ndarray) -> np.ndarray:
+    """Inverse standard-normal CDF Phi^{-1}(p) for p in (0, 1), vectorized.
+
+    Acklam's piecewise-rational approximation (abs error ~1e-4 in the far tails)
+    refined by one Halley iteration against the exact CDF, which drops the error
+    below ~1e-8 over the whole (0, 1) range. Used only for the rank-normal (Blom)
+    transform, where even the unrefined approximation would suffice.
+    """
+    p = np.asarray(p, dtype=float)
+    x = np.empty_like(p)
+    lo, hi = 0.02425, 1.0 - 0.02425
+    # central region
+    m = (p >= lo) & (p <= hi)
+    q = p[m] - 0.5
+    r = q * q
+    num = (((((_ACKLAM_A[0] * r + _ACKLAM_A[1]) * r + _ACKLAM_A[2]) * r
+             + _ACKLAM_A[3]) * r + _ACKLAM_A[4]) * r + _ACKLAM_A[5]) * q
+    den = ((((_ACKLAM_B[0] * r + _ACKLAM_B[1]) * r + _ACKLAM_B[2]) * r
+            + _ACKLAM_B[3]) * r + _ACKLAM_B[4]) * r + 1.0
+    x[m] = num / den
+    # tails: lower uses p, upper uses 1-p; the rational form is negative, so the
+    # lower tail takes it as-is and the upper tail negates it (Acklam's signs).
+    lower, upper = p < lo, p > hi
+    for mask, pl, sign in ((lower, p[lower], 1.0), (upper, 1.0 - p[upper], -1.0)):
+        if not np.any(mask):
+            continue
+        q = np.sqrt(-2.0 * np.log(pl))
+        t = ((((_ACKLAM_C[0] * q + _ACKLAM_C[1]) * q + _ACKLAM_C[2]) * q
+              + _ACKLAM_C[3]) * q + _ACKLAM_C[4]) * q + _ACKLAM_C[5]
+        b = (((_ACKLAM_D[0] * q + _ACKLAM_D[1]) * q + _ACKLAM_D[2]) * q
+             + _ACKLAM_D[3]) * q + 1.0
+        x[mask] = sign * (t / b)
+    # Halley refinement: e = Phi(x) - p, step damped by the curvature term
+    erfc = np.vectorize(math.erfc)
+    e = 0.5 * erfc(-x / math.sqrt(2.0)) - p
+    u = e * math.sqrt(2.0 * math.pi) * np.exp(0.5 * x * x)
+    x = x - u / (1.0 + 0.5 * x * u)
+    return x
+
+
+def rank_normalize(x: np.ndarray) -> np.ndarray:
+    """Rank-normal (Blom) transform of pooled draws, returned in chain shape.
+
+    Pool all $mn$ draws, replace each by its fractional rank $r$, then map to a
+    normal score $z = \\Phi^{-1}\\!\\big((r - 3/8)/(mn - 1/4)\\big)$ (Blom 1958).
+    The result is invariant to any monotone reparameterization of the target and
+    has finite moments even when the target does not -- the whole point, since
+    the classic variance-based $\\hat R$ is undefined for an infinite-variance
+    posterior. Shape (m, n) is preserved so split-R-hat can be run on z.
+    """
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+    m, n = x.shape
+    ranks = _average_ranks(x)                       # over the pooled mn draws
+    z = _standard_normal_ppf((ranks - 0.375) / (m * n - 0.25))
+    return z.reshape(m, n)
+
+
+def rank_normalized_rhat(x: np.ndarray) -> dict[str, float]:
+    """Rank-normalized split-R-hat (Vehtari et al. 2021), with the folded term.
+
+    Two failure modes need catching. **Location**: the chains disagree about the
+    centre. **Scale**: they agree about the centre but not the spread (one chain
+    stuck in a narrow mode, another wandering). Plain split-R-hat on
+    rank-normalized draws catches the first (``bulk``); running the same statistic
+    on the rank-normalized *folded* draws $|x - \\text{median}|$ catches the
+    second (``folded``), because folding turns a scale disagreement into a
+    location disagreement of the absolute deviations. The reported ``rhat`` is the
+    max of the two -- convergence requires passing both.
+
+    Returns ``{"bulk", "folded", "rhat"}``. Unlike :func:`split_rhat` this is
+    well-defined for heavy-tailed (even infinite-variance) targets, where the
+    classic statistic is dominated by a few enormous draws and drifts toward a
+    falsely reassuring 1. x : (m, n) draws of one scalar parameter across chains.
+    """
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+    bulk = split_rhat(rank_normalize(x))
+    med = np.median(x)
+    folded = split_rhat(rank_normalize(np.abs(x - med)))
+    return {"bulk": bulk, "folded": folded, "rhat": max(bulk, folded)}
+
+
 def split_rhat(x: np.ndarray) -> float:
     """Split-R-hat for one scalar parameter.
 
@@ -346,9 +469,12 @@ def summarize(
 ) -> list[dict[str, Any]]:
     """Per-dimension diagnostic table for samples of shape (m, n, dim).
 
-    Returns a list of dicts: mean, sd, bulk ESS, tail ESS, tau, split-R-hat per
-    dimension. The tail ESS sits next to the bulk ESS so a poorly-explored tail
-    (a much smaller tail_ess) is visible in the same row.
+    Returns a list of dicts per dimension: mean, sd, bulk ESS, tail ESS, tau,
+    classic split-R-hat (``rhat``) and rank-normalized R-hat (``rhat_rank``,
+    the max of its bulk and folded terms). The tail ESS sits next to the bulk
+    ESS so a poorly-explored tail is visible in the same row; ``rhat_rank`` sits
+    next to ``rhat`` so a heavy-tailed target where the classic statistic reads
+    a falsely reassuring 1 (Sec. 6.4) shows the discrepancy in the same row.
     """
     m, n, dim = samples.shape
     names = names or [f"x[{i}]" for i in range(dim)]
@@ -365,6 +491,7 @@ def summarize(
                 "ess": m * n / tau,
                 "tail_ess": tail_ess(chains),
                 "rhat": split_rhat(chains),
+                "rhat_rank": rank_normalized_rhat(chains)["rhat"],
             }
         )
     return rows
