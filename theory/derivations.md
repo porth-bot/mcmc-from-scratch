@@ -528,6 +528,67 @@ simulation). Then $R$ is the exchange rate, and you are knowingly buying a
 cheaper pipeline with a quantified amount of precision. What is not defensible
 is thinning in the belief that it makes the answer better.
 
+### 6.4 Rank-normalized split-$\hat R$
+
+The split-$\hat R$ of Sec. 6.2 is a ratio of variances, and a variance is only a
+meaningful summary when the target *has* one. Consider a heavy-tailed posterior —
+a Cauchy is the sharp case, with no finite mean or variance at all. The
+within-chain estimate
+
+$$W = \frac1{2m}\sum_{\text{halves}} \frac1{n-1}\sum_t (x_{ct}-\bar x_c)^2$$
+
+is then dominated by whichever half happened to catch the largest excursion; it
+is enormous and has huge sampling noise. A genuine between-chain location
+disagreement $B$ that would set off the alarm on a light-tailed target is, on the
+Cauchy, tiny next to that noise, so $\widehat{\text{var}}^+ / W \to 1$ and
+$\hat R$ reads a falsely reassuring $\approx 1.00$ on chains that have not mixed.
+This is not a rare corner: heavy tails are exactly where a sampler struggles, so
+it is precisely when the chains have *not* converged that the variance-based
+statistic is least able to say so.
+
+**The fix (Vehtari et al. 2021): work with ranks, which are finite regardless of
+the tails.** Pool all $mn$ draws, replace each by its rank $r$ (ties share their
+average rank — a Metropolis chain repeats its state on every rejection, so ties
+are common and must not bias the transform), and map ranks to normal scores by
+the **Blom (1958) rankit transform**
+
+$$z = \Phi^{-1}\!\Big(\frac{r - 3/8}{mn - 1/4}\Big).$$
+
+The offsets $3/8,\,1/4$ make $\mathbb E[z_{(i)}]$ match the expected order
+statistics of a standard normal to high accuracy, and — the load-bearing
+property — the transform is invariant to any monotone reparameterization of the
+target. The scores $z$ are approximately $N(0,1)$ for draws from *any* continuous
+distribution, Cauchy included, so they have the finite moments that ordinary
+split-$\hat R$ needs. **Bulk-$\hat R$** is split-$\hat R$ applied to $z$. Because
+rank-normalization only relabels values by their order, a between-chain *location*
+shift survives it intact — the shifted chain's draws still hold the larger ranks —
+so bulk-$\hat R$ flags exactly the location non-convergence the raw statistic
+missed, and does so without ever forming a variance of the raw draws.
+
+**Folding, for scale.** A location statistic — classic $\hat R$ *and* bulk-$\hat R$
+alike — is blind to chains that agree on the centre but differ in spread: their
+rank distributions are symmetric about the pooled median either way. Fold the
+draws about the pooled median,
+
+$$\zeta_{ct} = |x_{ct} - \operatorname{median}(x)|,$$
+
+and a scale disagreement becomes a *location* disagreement of the absolute
+deviations (the wider chain has systematically larger $\zeta$). Rank-normalize
+$\zeta$ and take split-$\hat R$ again: this **folded-$\hat R$** catches the scale
+failure. The reported statistic is the worst case,
+
+$$\hat R_{\text{rank}} = \max(\hat R_{\text{bulk}},\, \hat R_{\text{fold}}),$$
+
+so convergence must be declared on both the centre and the spread. The
+`experiments/rank_rhat.py` cases pin all three behaviours: on mixed $N(0,1)$
+chains both statistics sit at $1.00$ (the transform invents nothing); on
+Cauchy chains shifted by three IQRs the classic $\hat R = 1.00$ while
+$\hat R_{\text{bulk}} = 1.27$; on Cauchy chains with equal medians but scales
+$1$ and $6$ the location terms are both $1.00$ and only $\hat R_{\text{fold}}
+= 1.18$ fires. The one implementation nicety is that $\Phi^{-1}$ has no
+closed form: we use Acklam's rational approximation refined by a single Halley
+step against the exact CDF (error $< 10^{-8}$), keeping the package numpy-only.
+
 ## References
 
 - Metropolis, Rosenbluth, Rosenbluth, Teller & Teller (1953), *J. Chem. Phys.* 21.
@@ -538,7 +599,9 @@ is thinning in the belief that it makes the answer better.
 - Neal (2003), "Slice sampling", *Ann. Statist.* 31 (the funnel, Sec. 8).
 - Hoffman & Gelman (2014), "The No-U-Turn Sampler", *JMLR* 15 (dual averaging, Alg. 5).
 - Geyer (1992), "Practical Markov chain Monte Carlo", *Statist. Sci.* 7 (initial sequence estimators).
-- Gelman & Rubin (1992), *Statist. Sci.* 7; split/rank-normalized refinements in Vehtari et al. (2021), *Bayesian Anal.* 16.
+- Gelman & Rubin (1992), *Statist. Sci.* 7 (original $\hat R$).
+- Vehtari, Gelman, Simpson, Carpenter & Bürkner (2021), "Rank-normalization, folding, and localization: an improved $\hat R$", *Bayesian Anal.* 16 (Sec. 6.4 rank-normalized/folded $\hat R$, tail-ESS).
+- Blom (1958), *Statistical Estimates and Transformed Beta-Variables* (the $3/8$ rankit offset).
 - Roberts, Gelman & Gilks (1997), *Ann. Appl. Probab.* 7 (0.234 optimal scaling).
 - Rubin (1981), "Estimation in parallel randomized experiments", *J. Educ. Statist.* 6 (eight schools data).
 - Betancourt (2017), "A conceptual introduction to HMC", arXiv:1701.02434 (typical sets, divergences).

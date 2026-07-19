@@ -51,7 +51,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), optional **diagonal mass-matrix adaptation** from windowed warmup variances (Stan-style memoryless windows — a per-axis preconditioner so one step size fits an axis-aligned target of unequal scales), divergence tracking |
 | [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction — RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
 | [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
-| [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), split-$\hat R$, compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
+| [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021 — Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
 | [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
 | [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
 | [`mcmc/bnn.py`](mcmc/bnn.py) | Bayesian neural network (1-hidden-layer tanh MLP) with hand-written backprop log-posterior gradient, sampled by HMC; plus an Adam MAP/deep-ensemble trainer sharing the same model and objective |
@@ -298,12 +298,49 @@ rescales marginals, it cannot rotate**, so the funnel curvature in $(\log\tau,
 \eta)$ survives. That residual is exactly what a dense metric or NUTS is for
 (Days 17–18) — the honest limit of the cheap fix.
 
+### 8. Rank-normalized split-$\hat R$ (`experiments/rank_rhat.py`)
+
+Classic split-$\hat R$ (§6.2) is a ratio of a between-chain to a within-chain
+*variance* — meaningful only when the target has one. On a heavy-tailed
+posterior, $W$ is dominated by a few enormous draws and is so noisy that a real
+between-chain disagreement disappears into it: the statistic reads a falsely
+reassuring $\approx 1.00$ on chains that have plainly not mixed. Since heavy
+tails are exactly where mixing is hardest, this is the case you most want a
+diagnostic to catch. Vehtari et al. (2021) work with *ranks* instead — finite no
+matter how heavy the tails: pool the draws, replace each by its (average) rank,
+map ranks to normal scores via the Blom transform
+$z = \Phi^{-1}\!\big((r-\tfrac38)/(mn-\tfrac14)\big)$, and run ordinary
+split-$\hat R$ on those (`bulk`). A disagreement in *scale* (same centre,
+different spread) slips past a location statistic, so the reported value also
+folds to $|x-\text{median}|$ and repeats (`folded`); the rank-normalized
+$\hat R$ is the max.
+
+Three controlled cases, each with a known verdict (deterministic; `SEED = 20260719`):
+
+| case | classic $\hat R$ | rank bulk | rank folded | rank $\hat R$ | binds |
+|---|---|---|---|---|---|
+| A — mixed $N(0,1)$ (converged) | 1.00 | 1.00 | 1.00 | **1.00** | — |
+| B — Cauchy, location shift of 6 | 1.00 | **1.27** | 1.00 | **1.27** | bulk |
+| C — Cauchy, scale $1$ vs $6$, same median | 1.00 | 1.00 | **1.18** | **1.18** | folded |
+
+<p align="center"><img src="figures/rank_rhat.png" width="720"></p>
+
+Reading the three: (A) where the classic statistic is valid the rank version
+agrees — it is not allowed to invent a problem. (B) two of four Cauchy chains
+shifted by three inter-quartile ranges are genuinely unmixed, but the infinite
+variance fools the classic statistic; the rank *bulk* term catches the shift.
+(C) equal medians, unequal spread — now the *location* terms (classic **and**
+rank-bulk) are both blind, and only the folded term sees it. C is the case that
+justifies folding rather than stopping at the bulk rank statistic. `summarize()`
+reports `rhat_rank` next to the classic `rhat` so the gap is visible per
+coordinate.
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 80 tests; RuntimeWarnings are errors
+pytest                          # 87 tests; RuntimeWarnings are errors
 cd experiments
 python validate_exact.py        # ~30 s
 python funnel.py                # ~2 min
@@ -312,6 +349,7 @@ python tempering.py             # ~20 s  (bimodal: tempering vs a trapped chain)
 python bnn.py                   # ~1 min  (Bayesian NN: HMC vs ensemble vs MAP)
 python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
 python mass_matrix.py           # ~30 s  (diagonal metric: scale-free efficiency)
+python rank_rhat.py             # ~5 s   (rank-normalized R-hat: heavy-tail robustness)
 ```
 
 `emcee` is used *only* by the external benchmark — it is not a dependency of the
@@ -342,12 +380,10 @@ Seeds are fixed (`SEED = 20260703`).
 
 ## Limitations / next
 
-- Unit mass matrix; estimating $M$ from warmup covariance would fix the
-  Gaussian experiment's scale mismatch more elegantly than step-size tuning.
+- Mass matrix is *diagonal* (done, §7): it rescales marginals but cannot rotate,
+  so a correlated funnel's curvature survives — a dense metric or NUTS is next.
 - Fixed trajectory length (jittered): the principled endpoint is NUTS's
   U-turn criterion.
-- Split-$\hat R$ without rank-normalization (Vehtari et al. 2021 is the
-  modern refinement).
 - **Phase 2 (done):** Bayesian neural network posterior via this repo's HMC on
   a small MLP — predictive uncertainty and calibration vs a MAP point estimate
   and a deep ensemble ([`experiments/bnn.py`](experiments/bnn.py), section 5).
@@ -360,6 +396,8 @@ Key sources: Neal (2011) *MCMC using Hamiltonian dynamics*; Hoffman & Gelman
 (2014) JMLR (dual averaging); Geyer (1992) *Statist. Sci.* (initial sequence
 estimators); Gelman & Rubin (1992); Roberts, Gelman & Gilks (1997) (0.234);
 Neal (2003) (funnel); Rubin (1981) (data); Betancourt (2017) arXiv:1701.02434;
+Vehtari, Gelman, Simpson, Carpenter & Bürkner (2021) *Bayesian Anal.* 16
+(rank-normalized $\hat R$, folding, tail-ESS); Blom (1958) (rankit transform);
 Foreman-Mackey et al. (2013) PASP (emcee, the external-benchmark baseline).
 Full list with roles in [`theory/derivations.md`](theory/derivations.md).
 
