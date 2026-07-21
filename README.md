@@ -49,6 +49,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/metropolis.py`](mcmc/metropolis.py) | Random-walk MH, log-space accept, batched chains |
 | [`mcmc/gibbs.py`](mcmc/gibbs.py) | Systematic- **or** random-scan driver over state dicts + Gaussian full conditionals derived via the precision matrix. At matched work, systematic scan is ~2× more efficient than random scan on the correlated Gaussian ([`experiments/gibbs_scan.py`](experiments/gibbs_scan.py)) — random scan can leave a coordinate stale for a sweep |
 | [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), optional **diagonal mass-matrix adaptation** from windowed warmup variances (Stan-style memoryless windows — a per-axis preconditioner so one step size fits an axis-aligned target of unequal scales), divergence tracking |
+| [`mcmc/nuts.py`](mcmc/nuts.py) | No-U-Turn Sampler (multinomial, Betancourt 2017): recursive doubling with the generalized U-turn criterion, canonical (multinomial) state selection, gradient-cached leapfrog (one gradient per leaf), max-depth **and** per-iteration divergence handling, same dual-averaging warmup — HMC with the trajectory-length knob removed. ~4–6× the ESS per gradient of hand-tuned fixed-$L$ HMC (§9) |
 | [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction — RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
 | [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021 — Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
@@ -335,12 +336,58 @@ justifies folding rather than stopping at the bulk rank statistic. `summarize()`
 reports `rhat_rank` next to the classic `rhat` so the gap is visible per
 coordinate.
 
+### 9. Why NUTS: adaptive trajectory length per gradient (`experiments/nuts_benchmark.py`)
+
+Dual averaging tunes the step size and the diagonal metric (§7) fixes one scale
+mismatch, but fixed-length HMC still carries a hand-set knob: the number of
+leapfrog steps $L$. Too few and the proposal barely moves; too many and the
+trajectory U-turns back toward the start, so the extra gradients buy nothing.
+NUTS ([`mcmc/nuts.py`](mcmc/nuts.py), multinomial form of Betancourt 2017) grows
+each trajectory until it starts to fold back on itself — no $L$. The honest
+question is whether removing the knob *costs* efficiency; the yardstick is **ESS
+per gradient** (per 1000 model evaluations — the hardware-independent currency,
+with the same asterisk as §6: a gradient eval does more work than RWMH's density
+eval, so the per-eval column flatters the gradient-free row).
+
+| non-centered funnel (10-dim) | grad | ESS($v$) | min ESS | **ESS($v$) / 1k ev** | mean depth |
+|---|---|---|---|---|---|
+| RWMH | density | 1,102 | 1,102 | 4.2 | — |
+| HMC (fixed $L=20$) | gradient | 6,616 | 6,616 | 6.7 | — |
+| **NUTS** | gradient | 4,545 | 4,545 | **29.2** | 1.9 |
+
+| eight schools (10-dim) | grad | ESS($\tau$) | min ESS | **ESS($\tau$) / 1k ev** | div |
+|---|---|---|---|---|---|
+| RWMH | density | 5,366 | 181 | 20.6\* | 0 |
+| HMC (fixed $L=20$) | gradient | 6,148 | 6,148 | 5.8 | 547 |
+| **NUTS** | gradient | 10,779 | 1,963 | **33.6** | 172 |
+
+<p align="center"><img src="figures/nuts_benchmark.png" width="720"></p>
+
+On the benign non-centered funnel the win is purely length: a fixed $L=20$
+overshoots the U-turn on the easy directions, while NUTS picks a mean depth of
+~2 (≈ a handful of steps) and gets **~4× the ESS per gradient**. On eight
+schools NUTS has the most ESS($\tau$) per gradient of the three; RWMH's 20.6\*
+carries the asterisk (its eval is a cheap density, and its worst-coordinate ESS
+is 181 against NUTS's 1,963).
+
+**NUTS removes the length knob, not the geometry.** Run it on the *centered*
+funnel and its divergences pile into the neck — 13% of iterations, and $v$ is
+under-covered ($\mathrm{sd}\,2.7$ vs the true $3.0$). Non-centering (§2) drops
+that to **zero** divergences and $\mathrm{sd}\,3.0$. This is the honest limit and
+the note on simplifications vs Stan: our NUTS uses only a *diagonal* metric and
+the endpoint-momentum U-turn check, so the neck's curvature defeats it exactly as
+it defeats fixed-L HMC — but the centered funnel defeats Stan's NUTS too, because
+the neck is a property of the parameterization, not the sampler. The fix is
+choosing good coordinates, not a fancier integrator.
+
+<p align="center"><img src="figures/nuts_funnel_divergences.png" width="720"></p>
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 87 tests; RuntimeWarnings are errors
+pytest                          # 98 tests; RuntimeWarnings are errors
 cd experiments
 python validate_exact.py        # ~30 s
 python funnel.py                # ~2 min
@@ -350,6 +397,7 @@ python bnn.py                   # ~1 min  (Bayesian NN: HMC vs ensemble vs MAP)
 python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
 python mass_matrix.py           # ~30 s  (diagonal metric: scale-free efficiency)
 python rank_rhat.py             # ~5 s   (rank-normalized R-hat: heavy-tail robustness)
+python nuts_benchmark.py        # ~30 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
 ```
 
 `emcee` is used *only* by the external benchmark — it is not a dependency of the
@@ -380,10 +428,13 @@ Seeds are fixed (`SEED = 20260703`).
 
 ## Limitations / next
 
-- Mass matrix is *diagonal* (done, §7): it rescales marginals but cannot rotate,
-  so a correlated funnel's curvature survives — a dense metric or NUTS is next.
-- Fixed trajectory length (jittered): the principled endpoint is NUTS's
-  U-turn criterion.
+- Trajectory length is now adaptive (NUTS, done, §9): the U-turn criterion
+  removes the fixed-$L$ knob and buys ~4–6× the ESS per gradient. The remaining
+  metric is still *diagonal* (§7) — it rescales marginals but cannot rotate, so a
+  correlated funnel's curvature survives. Both our NUTS and Stan's diverge in the
+  *centered* funnel neck; the fix there is non-centering, not the sampler. A
+  *dense* or Riemannian metric is the principled next step for curvature the
+  reparameterization cannot remove.
 - **Phase 2 (done):** Bayesian neural network posterior via this repo's HMC on
   a small MLP — predictive uncertainty and calibration vs a MAP point estimate
   and a deep ensemble ([`experiments/bnn.py`](experiments/bnn.py), section 5).
@@ -409,7 +460,7 @@ buried.
 
 | Repo | Built from scratch |
 | --- | --- |
-| **mcmc-from-scratch** *(this repo)* | Metropolis-Hastings, Gibbs, HMC, MALA, parallel tempering — validated against exact posteriors |
+| **mcmc-from-scratch** *(this repo)* | Metropolis-Hastings, Gibbs, HMC, NUTS, MALA, parallel tempering — validated against exact posteriors |
 | [gp-from-scratch](https://github.com/porth-bot/gp-from-scratch) | GP regression, kernels with hand-derived gradients, ML-II, and the NTK/NNGP wide-network correspondence |
 | [grokking-transformer](https://github.com/porth-bot/grokking-transformer) | A transformer that groks modular arithmetic, and the Fourier circuit it learns |
 | [pinn-from-scratch](https://github.com/porth-bot/pinn-from-scratch) | Physics-informed networks: exact autograd PDE residuals against closed-form solutions |

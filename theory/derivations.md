@@ -348,6 +348,90 @@ unit-metric ESS/grad on $\eta_1$), but $\log\tau$ gains only $\sim 2.4\times$: t
 funnel is curvature the diagonal cannot touch, the honest limit that motivates
 Days 17–18 (NUTS).
 
+### 4.9 The No-U-Turn Sampler
+
+Dual averaging (4.5) removes the step-size knob; the mass matrix (4.8) removes
+one scale mismatch. What is left in fixed-length HMC is the **trajectory length**
+$L$. Too small and the proposal barely moves; too large and the trajectory
+U-turns and comes back toward the start, so the extra gradients buy nothing (and
+on a near-Gaussian target a fixed $L$ can *resonate* with the oscillation period,
+which is why `hmc()` jitters $L$). NUTS (Hoffman & Gelman 2014; the multinomial
+formulation of Betancourt 2017 used here) removes the knob by growing each
+trajectory until it starts to fold back on itself.
+
+**Recursive doubling.** From the current $(x, p)$, repeatedly *double* the
+trajectory: draw a random time direction $\in\{-1,+1\}$ and integrate a new
+sub-trajectory of the same length as everything built so far, extending the
+appropriate end. After $j$ doublings the tree holds up to $2^j$ states built with
+$2^j-1$ leapfrog steps. The two endpoints of every *balanced* sub-tree are exact
+leapfrog images of each other, and the direction is chosen independently of the
+current state, so the transition is reversible — this is what lets the accept
+step be subsumed into the weighting rather than written out (contrast 4.4).
+
+**The no-U-turn criterion.** A balanced sub-tree spanning
+$(x_-,p_-)\ldots(x_+,p_+)$ is *turning* once advancing either end would stop
+increasing the distance between them, i.e. the span vector no longer projects
+positively onto the velocity $M^{-1}p$ at that end:
+
+$$(x_+ - x_-)^\top M^{-1} p_- < 0 \quad\text{or}\quad (x_+ - x_-)^\top M^{-1} p_+ < 0.$$
+
+(The metric enters through the velocity, so the criterion is the natural one in
+the same geometry the leapfrog uses; identity metric $\Rightarrow$ just $p$.)
+The instant *any* sub-tree turns, doubling stops — the length adapts to local
+geometry, long in flat directions, short in tight ones, with no user input.
+
+**Multinomial (canonical) selection.** Every visited state $z=(x,p)$ carries
+canonical weight $\exp(-H(z))=\exp(\log\tilde\pi(x) - K(p))$. The next sample is
+drawn from the whole trajectory with probability proportional to that weight.
+Because the trajectory is a slice of the joint $\propto e^{-H}$ whose $x$-marginal
+is $\pi$, the draw leaves $\pi$ invariant — the accept/reject of HMC is replaced
+by *weighting the states the trajectory already visited*. We realise the
+multinomial progressively while building: within a balanced doubling the newer
+half is taken with probability equal to its share $W_{\text{new}}/(W_{\text{old}}+W_{\text{new}})$
+of the canonical weight; at the top level the new half is taken with Stan's
+*biased* probability $\min(1, W_{\text{new}}/W_{\text{old}})$, which pushes the
+sample outward along the trajectory for faster mixing while remaining a valid
+transition (Betancourt 2017, App.).
+
+**Termination on pathological geometry.** Two valves keep the recursion finite
+where the criterion never fires. A **maximum tree depth** caps work per
+iteration (Stan's default 10 $\Rightarrow \le 1023$ steps). A **divergence**
+check marks any leaf whose energy error $\Delta H$ exceeds a threshold (or is
+non-finite) as invalid — weight zero, expansion halted — because a large $\Delta H$
+means the symplectic integrator has left the level set the exact flow would
+preserve (4.2), the signal that $\varepsilon$ is too large for the local
+curvature. Divergences are recorded per iteration, so their *positions* are a
+diagnostic: on the centered funnel they pile into the neck (§ measured below).
+
+**Cost accounting.** Each leaf is one leapfrog step. A leapfrog step needs the
+gradient at both endpoints, but the second endpoint of one leaf is the first
+endpoint of the next, so caching the gradient makes NUTS cost exactly *one*
+gradient per leaf — the honest denominator for the ESS-per-gradient comparison.
+Step size is still dual-averaged (4.5), here driving the mean per-leaf
+acceptance statistic $\overline{\alpha}$ to the target.
+
+**Simplifications vs Stan (stated, not hidden).** This is a faithful but minimal
+NUTS. It uses (i) a *diagonal* metric only — no dense or Riemannian metric, so
+correlations and the funnel's varying curvature are untouched, exactly as in
+4.8; (ii) the endpoint-momentum U-turn check on each balanced sub-tree, not the
+finer generalized criterion Stan also applies to the leftmost/rightmost
+sub-sub-trees; (iii) a single shared step size and depth cap across chains. The
+consequence is honest and visible: on the **centered** funnel our NUTS still
+diverges in the neck — but so does Stan's, because the neck is a property of the
+*parameterization*, not the sampler. The fix is the non-centering of 4.6, after
+which NUTS mixes cleanly. NUTS removes the length knob; it does not remove the
+need to choose good coordinates.
+
+**Measured (`experiments/nuts_benchmark.py`).** Per gradient, on the
+non-centered funnel NUTS delivers $\approx 29$ ESS$(v)$ per 1000 gradients
+against a hand-tuned fixed-$L$ HMC's $\approx 7$ and RWMH's $\approx 4$ — the
+length automation *buys* efficiency rather than costing it, because a fixed
+$L=20$ overshoots the U-turn on the easy directions. On non-centered eight
+schools NUTS gives the most ESS$(\tau)$ per gradient of the three. On the
+centered funnel it logs $\sim 13\%$ divergent iterations clustered in the neck
+and under-covers $v$ ($\mathrm{sd}\,2.7$ vs the true $3.0$); non-centering drops
+that to zero divergences and $\mathrm{sd}\,3.0$.
+
 ## 5. The models
 
 ### 5.1 Conjugate Bayesian linear regression
