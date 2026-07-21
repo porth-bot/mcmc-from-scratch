@@ -50,7 +50,11 @@ Two safety valves make the recursion terminate on pathological geometry
 caps work per iteration even where the criterion never fires, and a
 **divergence** check marks any leaf whose energy error exceeds
 ``DIVERGENCE_DELTA_H`` as invalid (weight zero) and halts expansion -- the
-signal that the step size is too large for the local curvature.
+signal that the step size is too large for the local curvature. Divergences are
+both counted (``n_divergent``) and recorded *per iteration* (a ``divergent``
+mask), so their positions can be plotted against the target: on Neal's funnel
+they cluster in the neck, the honest picture of where a diagonal-metric
+integrator still fails and non-centering is the fix (Sec. 4.9).
 
 Step size is tuned during warmup by the same dual averaging used for HMC
 (Hoffman & Gelman 2014, Alg. 5), driving the average per-leaf acceptance
@@ -328,9 +332,12 @@ def nuts(
     -------
     SamplerResult; ``extras`` holds per-iteration energy error of the selected
     state ``delta_H`` (n_chains, n_samples), the ``tree_depth`` reached
-    (n_chains, n_samples), the final ``step_size``, ``n_divergent``,
-    ``n_grad_evals`` (one per leaf, gradient cached across leaves), and the
-    ``inv_mass`` used.
+    (n_chains, n_samples), a per-iteration ``divergent`` boolean mask
+    (n_chains, n_samples) marking iterations whose tree hit at least one
+    divergence — the positions plot straight onto the target to show *where* the
+    step size is too large (the funnel neck; ``experiments/nuts_benchmark.py``) —
+    the final ``step_size``, the scalar ``n_divergent`` count, ``n_grad_evals``
+    (one per leaf, gradient cached across leaves), and the ``inv_mass`` used.
 
     Examples
     --------
@@ -357,6 +364,7 @@ def nuts(
     samples = np.empty((n_chains, n_samples, dim))
     delta_H = np.empty((n_chains, n_samples))
     tree_depth = np.empty((n_chains, n_samples), dtype=int)
+    divergent = np.zeros((n_chains, n_samples), dtype=bool)
     n_divergent = 0
     n_grad_evals = 0
 
@@ -382,6 +390,7 @@ def nuts(
                 samples[c, i, :] = x[c]
                 delta_H[c, i] = dH
                 tree_depth[c, i] = depth
+                divergent[c, i] = nd > 0
                 n_divergent += nd
 
         if it < n_warmup and adapt_step_size:
@@ -403,6 +412,7 @@ def nuts(
         extras={
             "delta_H": delta_H,
             "tree_depth": tree_depth,
+            "divergent": divergent,
             "step_size": eps,
             "n_divergent": n_divergent,
             "n_grad_evals": n_grad_evals,

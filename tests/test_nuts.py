@@ -175,3 +175,33 @@ def test_nuts_flags_divergences_with_huge_step_size():
     )
     assert res.extras["n_divergent"] > 0
     assert np.all(np.isfinite(res.samples))  # divergences rejected, not stored
+
+
+def test_nuts_per_iteration_divergence_mask():
+    """The per-iteration ``divergent`` mask must have the sampling shape and be
+    consistent with the scalar count: at least one flagged iteration when the
+    step size is huge, none when it is well tuned. The mask is what lets the
+    benchmark plot *where* divergences land (the funnel neck)."""
+    g = Gaussian(np.zeros(5), np.eye(5))
+
+    # huge step: divergences happen, and the mask flags whole iterations
+    res_bad = nuts(
+        g, np.random.default_rng(7).standard_normal((4, 5)), n_samples=300,
+        step_size=8.0, rng=np.random.default_rng(7), n_warmup=0,
+        adapt_step_size=False,
+    )
+    mask = res_bad.extras["divergent"]
+    assert mask.shape == res_bad.samples.shape[:2]
+    assert mask.dtype == bool
+    assert mask.any()  # some iteration hit a divergence
+    # the count sums leaves, the mask sums iterations, so 0 < iters <= leaves
+    assert 0 < int(mask.sum()) <= res_bad.extras["n_divergent"]
+
+    # well-tuned run on the same easy target: no divergences flagged
+    res_ok = nuts(
+        g, np.random.default_rng(8).standard_normal((4, 5)), n_samples=500,
+        step_size=0.6, rng=np.random.default_rng(8), n_warmup=200,
+        adapt_step_size=True,
+    )
+    assert not res_ok.extras["divergent"].any()
+    assert res_ok.extras["n_divergent"] == 0
