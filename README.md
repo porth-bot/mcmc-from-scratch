@@ -382,12 +382,36 @@ choosing good coordinates, not a fancier integrator.
 
 <p align="center"><img src="figures/nuts_funnel_divergences.png" width="720"></p>
 
+### Appendix: batched chains scale almost for free
+
+Every sampler advances all its chains in lockstep as one batched NumPy
+computation (`mcmc/base.py`), so the extra chains are close to free until they
+saturate memory bandwidth. Timing HMC on a 10-D correlated Gaussian (fixed step
+size and leapfrog length, so the per-chain arithmetic is identical) across
+`n_chains` from 1 to 64 makes that concrete:
+
+| `n_chains` | ms / iteration | ms / iter / chain | effective samples / s |
+|---|---|---|---|
+| 1 | 0.12 | 0.119 | 3.2k |
+| 8 | 0.12 | 0.015 | 29k |
+| 64 | 0.22 | 0.003 | 112k |
+
+Going from 1 to 64 chains costs only ~1.8× the wall-clock *per iteration* — so
+the per-chain cost falls ~36× and effective-sample **throughput** rises almost
+linearly with the chain count (the right panel tracks the ideal line until
+bandwidth starts to bind past ~16 chains). This is why the many-chain $\hat R$
+diagnostics elsewhere in this repo are cheap to run. Numbers are machine-
+dependent (`experiments/vectorized_scaling.py`); the statistical validity of the
+batching at any chain count is pinned in `tests/test_vectorized_scaling.py`.
+
+![vectorized scaling](figures/vectorized_scaling.png)
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 98 tests; RuntimeWarnings are errors
+pytest                          # 101 tests; RuntimeWarnings are errors
 cd experiments
 python validate_exact.py        # ~30 s
 python funnel.py                # ~2 min
@@ -398,6 +422,7 @@ python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emce
 python mass_matrix.py           # ~30 s  (diagonal metric: scale-free efficiency)
 python rank_rhat.py             # ~5 s   (rank-normalized R-hat: heavy-tail robustness)
 python nuts_benchmark.py        # ~30 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
+python vectorized_scaling.py    # ~10 s  (wall-clock per step vs chain count)
 ```
 
 `emcee` is used *only* by the external benchmark — it is not a dependency of the
