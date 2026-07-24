@@ -408,29 +408,55 @@ batching at any chain count is pinned in `tests/test_vectorized_scaling.py`.
 
 ## Reproduce
 
+One command, from a clean clone:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-pytest                          # 101 tests; RuntimeWarnings are errors
-cd experiments
-python validate_exact.py        # ~30 s
-python funnel.py                # ~2 min
-python eight_schools.py         # ~1 min
-python tempering.py             # ~20 s  (bimodal: tempering vs a trapped chain)
-python bnn.py                   # ~1 min  (Bayesian NN: HMC vs ensemble vs MAP)
-python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
-python mass_matrix.py           # ~30 s  (diagonal metric: scale-free efficiency)
-python rank_rhat.py             # ~5 s   (rank-normalized R-hat: heavy-tail robustness)
-python nuts_benchmark.py        # ~30 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
-python vectorized_scaling.py    # ~10 s  (wall-clock per step vs chain count)
+./reproduce.sh                  # tests, then all 13 experiments: ~2.5 min total
 ```
+
+`requirements.txt` pins the exact versions every committed figure and table was
+produced with (Python 3.12.13); `pyproject.toml` keeps lower bounds instead, so
+CI goes on testing against current releases on 3.9 and 3.12.
+
+**How exact is it?** Rerunning the whole suite in that pinned environment
+regenerates 19 of the 20 committed PNGs byte-for-byte — the samplers are seeded
+and NumPy's bit generators are stable across versions, so the chains, and
+therefore the ESS and R-hat tables, are identical. The one file that differs is
+`vectorized_scaling.png`, which plots wall-clock per step and so measures the
+machine; the ESS-per-gradient columns next to it are the portable ones. Timing
+numbers in this README are from a 2020s laptop CPU.
+
+To run a single experiment instead:
+
+```bash
+cd experiments
+python validate_exact.py        # ~8 s
+python optimal_scaling.py       # ~6 s   (acceptance rate vs efficiency: the 0.234 rule)
+python thinning.py              # ~3 s   (what thinning costs)
+python gibbs_scan.py            # ~2 s   (systematic vs random scan)
+python funnel.py                # ~12 s
+python eight_schools.py         # ~6 s
+python tempering.py             # ~2 s   (bimodal: tempering vs a trapped chain)
+python bnn.py                   # ~8 s   (Bayesian NN: HMC vs ensemble vs MAP)
+python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
+python mass_matrix.py           # ~35 s  (diagonal metric: scale-free efficiency)
+python rank_rhat.py             # ~1 s   (rank-normalized R-hat: heavy-tail robustness)
+python nuts_benchmark.py        # ~35 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
+python vectorized_scaling.py    # ~3 s   (wall-clock per step vs chain count)
+```
+
+(Those are measured, not estimated: the timings come from the `reproduce.sh`
+run above, which prints a per-step number.)
 
 `emcee` is used *only* by the external benchmark — it is not a dependency of the
 package or the tests (CI installs numpy + pytest only). Install it with
 `pip install emcee` or `pip install -e '.[bench]'`.
 
 Figures land in `figures/`; every table above is printed by the scripts.
-Seeds are fixed (`SEED = 20260703`).
+Seeds are fixed (`SEED = 20260703`). There is nothing to download and no cached
+state to warm up: the "log" this repo replays from is the seed plus the code.
 
 ## Design notes
 
