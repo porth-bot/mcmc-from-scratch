@@ -501,8 +501,7 @@ generative models start.
 
 ## Provenance
 
-Built as a study resource: implemented from scratch with AI assistance
-(Claude), with every derivation written out in
+Built as a study resource, with every derivation written out in
 [`theory/derivations.md`](theory/derivations.md) and every non-obvious claim
 tested. MIT license.
 
