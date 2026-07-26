@@ -67,6 +67,51 @@ def test_dropping_the_hastings_drift_biases_the_chain():
     assert err_rwmh < 0.25
 
 
+def _ula(target, x0, n_samples, step_size, rng, n_warmup):
+    """MALA with the accept step deleted -- the unadjusted Langevin algorithm.
+
+    Deliberately kept in the test file: ULA is a *biased* sampler, so shipping
+    it from the package would invite someone to use it as one. Here it exists
+    only to measure that bias.
+    """
+    x = np.array(x0, dtype=float, copy=True)
+    out = np.empty((x.shape[0], n_samples, x.shape[1]))
+    for it in range(n_warmup + n_samples):
+        grad = np.asarray(target.grad_logpdf(x), dtype=float)
+        x = x + 0.5 * step_size**2 * grad + step_size * rng.standard_normal(x.shape)
+        if it >= n_warmup:
+            out[:, it - n_warmup, :] = x
+    return out
+
+
+def test_unadjusted_langevin_bias_matches_the_closed_form():
+    """Exercise 1(c) in theory/derivations.md Sec. 7, and the reason the accept
+    step exists at all.
+
+    Skipping the Metropolis correction on pi = N(0, 1) leaves an AR(1) chain
+    x' = (1 - eps^2/2) x + eps z, whose stationary variance is
+    eps^2 / (1 - (1 - eps^2/2)^2) = 1 / (1 - eps^2/4) -- over-dispersed by a
+    predictable amount that does NOT shrink with more samples, only with a
+    smaller step. MALA at the same step size has no such bias.
+    """
+    target = Gaussian(mean=[0.0], cov=[[1.0]])
+    for eps in (0.5, 0.8):
+        predicted = 1.0 / (1.0 - eps**2 / 4.0)
+
+        rng = np.random.default_rng(4)
+        x0 = np.zeros((8, 1))
+        ula_var = _ula(target, x0, 40_000, eps, rng, 2_000).var()
+        assert abs(ula_var - predicted) < 0.02, (eps, ula_var, predicted)
+        # and the bias is real, not within noise of the truth
+        assert ula_var > 1.0 + 0.5 * (predicted - 1.0)
+
+        rng = np.random.default_rng(4)
+        mala_var = mala(
+            target, x0, n_samples=40_000, step_size=eps, rng=rng, n_warmup=2_000
+        ).pooled().var()
+        assert abs(mala_var - 1.0) < 0.02, (eps, mala_var)
+
+
 def test_n_grad_evals_counts_every_proposal_gradient():
     g = _correlated_gaussian()
     rng = np.random.default_rng(3)

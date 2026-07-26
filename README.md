@@ -28,8 +28,13 @@ designed so that **every claim has a ground truth or a cross-check**.
 
 Full derivations (detailed balance → MH → Gibbs-as-MH → the HMC involution
 argument → dual averaging → ESS/R-hat) are in
-[`theory/derivations.md`](theory/derivations.md). The short version of why
-HMC works:
+[`theory/derivations.md`](theory/derivations.md), which ends with
+[five exercises](theory/derivations.md#7-exercises) over the material —
+MALA's Hastings correction and the bias it repairs, a Gibbs sampler for
+regression with unknown noise, the $\rho^2$ autocorrelation, leapfrog under a
+mass matrix, and the replica-exchange acceptance ratio — with collapsed
+solutions and, for each, the test or experiment that checks the answer. The
+short version of why HMC works:
 
 $$\pi(x, p) \propto e^{-H(x,p)}, \quad H = -\log\tilde\pi(x) + \tfrac12\lVert p\rVert^2$$
 

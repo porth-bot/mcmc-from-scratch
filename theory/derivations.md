@@ -1,8 +1,10 @@
 # Derivations
 
 Everything the code does, proved or derived. Sections map onto modules:
-Sec. 2 → `mcmc/metropolis.py`, Sec. 3 → `mcmc/gibbs.py`, Sec. 4 → `mcmc/hmc.py`,
-Sec. 5 → `mcmc/models.py`, Sec. 6 → `mcmc/diagnostics.py`.
+Sec. 2 → `mcmc/metropolis.py`, Sec. 3 → `mcmc/gibbs.py`, Sec. 4 → `mcmc/hmc.py`
+and `mcmc/nuts.py`, Sec. 5 → `mcmc/models.py`, Sec. 6 → `mcmc/diagnostics.py`.
+Sec. 7 is a set of exercises over the whole document, with collapsed solutions
+and a pointer to the test or experiment that checks each answer.
 
 ## 1. The problem
 
@@ -672,6 +674,271 @@ $1$ and $6$ the location terms are both $1.00$ and only $\hat R_{\text{fold}}
 = 1.18$ fires. The one implementation nicety is that $\Phi^{-1}$ has no
 closed form: we use Acklam's rational approximation refined by a single Halley
 step against the exact CDF (error $< 10^{-8}$), keeping the package numpy-only.
+
+## 7. Exercises
+
+Five problems over the material above, in rough order of the sections they lean
+on. Each is answerable with the definitions already given — no outside results
+needed — and each has a check in the repo, so the answer can be *verified*
+rather than believed. Solutions are collapsed; the point is to try first.
+
+### Exercise 1 — MALA: the Hastings correction, and what it repairs
+
+`mcmc/mala.py` proposes $x' = x + \tfrac{\varepsilon^2}{2}\nabla\log\pi(x) + \varepsilon z$,
+$z \sim N(0, I)$, and applies a Metropolis–Hastings accept.
+
+**(a)** Write $q(x' \mid x)$ and show that the $\varepsilon$-dependent Gaussian
+normalizer cancels in the Hastings ratio, so only the exponents matter.
+
+**(b)** Show that deleting the drift term recovers the symmetric random walk,
+i.e. the ratio collapses to $\pi(x')/\pi(x)$.
+
+**(c)** The *unadjusted* Langevin algorithm (ULA) skips the accept step. Take
+$\pi = N(0,1)$ and compute ULA's exact stationary variance as a function of
+$\varepsilon$. How large is the bias at $\varepsilon = 0.8$, and what happens as
+$\varepsilon \to 0$?
+
+<details>
+<summary>Solution</summary>
+
+**(a)** With mean $m(x) = x + \tfrac{\varepsilon^2}{2}\nabla\log\pi(x)$ and
+covariance $\varepsilon^2 I$,
+
+$$q(x' \mid x) = (2\pi\varepsilon^2)^{-d/2}\exp\!\Big(-\frac{\lVert x' - m(x)\rVert^2}{2\varepsilon^2}\Big).$$
+
+Both directions of the ratio use the *same* $\varepsilon$, so
+$(2\pi\varepsilon^2)^{-d/2}$ appears once in the numerator and once in the
+denominator and cancels — which is why `_log_q` returns only the exponent, "up
+to the $\varepsilon$ normalizer". What does *not* cancel is $m$: the forward
+proposal is centred on $x$ drifted along $\nabla\log\pi(x)$ and the reverse on
+$x'$ drifted along $\nabla\log\pi(x')$, two different displacements. Hence
+
+$$\log\alpha = \log\pi(x') - \log\pi(x) - \frac{\lVert x - m(x')\rVert^2}{2\varepsilon^2} + \frac{\lVert x' - m(x)\rVert^2}{2\varepsilon^2}.$$
+
+**(b)** With the drift removed, $m(x) = x$ and $m(x') = x'$, so
+$\lVert x - x'\rVert^2 = \lVert x' - x\rVert^2$ and the two quadratic terms
+cancel exactly: $\alpha = \min(1, \pi(x')/\pi(x))$, the symmetric Metropolis
+rule of Sec. 2. MALA *is* RWMH plus a gradient-informed drift, and the extra
+bookkeeping is the price of the asymmetry the drift creates.
+
+**(c)** For $\pi = N(0,1)$, $\nabla\log\pi(x) = -x$, so the ULA update is
+
+$$x_{t+1} = \Big(1 - \tfrac{\varepsilon^2}{2}\Big)x_t + \varepsilon z_t,$$
+
+an AR(1) with coefficient $a = 1 - \varepsilon^2/2$ and innovation variance
+$\varepsilon^2$. Its stationary variance is
+
+$$\frac{\varepsilon^2}{1 - a^2} = \frac{\varepsilon^2}{\varepsilon^2 - \varepsilon^4/4}
+= \frac{1}{1 - \varepsilon^2/4} \;>\; 1.$$
+
+ULA is systematically **over-dispersed**, by $6.7\%$ at $\varepsilon = 0.5$ and
+$19\%$ at $\varepsilon = 0.8$, and the bias vanishes only as
+$\varepsilon^2/4 \to 0$ — i.e. exactly in the limit where the sampler stops
+moving. That trade is what the accept step buys you out of: it makes $\pi$ the
+*exact* stationary law at any usable $\varepsilon$. Note the bias is $O(\varepsilon^2)$
+in the variance even though Euler–Maruyama's weak error is $O(\varepsilon)$ per
+step; the discretization error here happens to enter only through $a^2$.
+
+*Check it:* `tests/test_mala.py::test_unadjusted_langevin_bias_matches_the_closed_form`
+simulates both chains at $\varepsilon \in \{0.5, 0.8\}$ and confirms ULA lands on
+$1/(1-\varepsilon^2/4)$ while MALA at the same step size stays at $1$.
+
+*Why it matters beyond MCMC:* annealed **unadjusted** Langevin with a *learned*
+$\nabla\log\pi$ is how score-based generative models sample. They cannot run the
+accept step (no normalized $\pi$ to evaluate), so this bias is a permanent
+resident of that setting rather than a bug — one more reason the noise schedule
+does so much work there.
+
+</details>
+
+### Exercise 2 — A Gibbs sampler for regression with unknown noise
+
+Sec. 5.1 gives conjugate linear regression with $\sigma^2$ **known**. Now put a
+prior on it: $y = X\beta + \epsilon$, $\epsilon \sim N(0, \sigma^2 I)$,
+$\beta \sim N(0, \tau^2 I)$ with $\tau^2$ fixed, and
+$\sigma^2 \sim \text{InvGamma}(a, b)$.
+
+Derive both full conditionals, $p(\beta \mid \sigma^2, y)$ and
+$p(\sigma^2 \mid \beta, y)$, and say why the *joint* posterior is no longer the
+Gaussian of Sec. 5.1.
+
+<details>
+<summary>Solution</summary>
+
+**$\beta$ given $\sigma^2$.** Conditioning on $\sigma^2$ freezes it at a number,
+so this is exactly Sec. 5.1: the log density is quadratic in $\beta$, and
+completing the square gives
+
+$$\beta \mid \sigma^2, y \sim N(\mu_n, \Sigma_n), \qquad
+\Sigma_n = \Big(\frac{X^\top X}{\sigma^2} + \frac{I}{\tau^2}\Big)^{-1}, \qquad
+\mu_n = \Sigma_n \frac{X^\top y}{\sigma^2}.$$
+
+**$\sigma^2$ given $\beta$.** Keep only the factors containing $\sigma^2$. The
+likelihood contributes $(\sigma^2)^{-n/2}\exp(-\lVert y - X\beta\rVert^2/2\sigma^2)$
+(the prior on $\beta$ has no $\sigma^2$ in it — this is where the choice of a
+*non*-$g$-prior matters), and the InvGamma$(a,b)$ prior contributes
+$(\sigma^2)^{-(a+1)}\exp(-b/\sigma^2)$. Multiplying,
+
+$$p(\sigma^2 \mid \beta, y) \propto (\sigma^2)^{-(a + n/2 + 1)}
+\exp\!\Big(-\frac{b + \tfrac12\lVert y - X\beta\rVert^2}{\sigma^2}\Big)
+= \text{InvGamma}\Big(a + \frac n2,\; b + \frac12\lVert y - X\beta\rVert^2\Big),$$
+
+the same shape-plus-half-the-sum-of-squares update as $\tau^2$ in Sec. 5.2.
+
+**Why the joint is not Gaussian.** $\Sigma_n$ and $\mu_n$ *depend on*
+$\sigma^2$, so marginalizing it out mixes Gaussians of different widths: the
+marginal $p(\beta \mid y)$ is a multivariate Student-$t$, not a Gaussian (the
+scale mixture of Sec. 4.7's heavy-tailed target, in fact). Each conditional
+stays standard while the joint does not — which is precisely the situation
+Gibbs sampling exists for, and precisely why the sampler is *not* a way to
+avoid knowing the conditionals.
+
+</details>
+
+### Exercise 3 — Why Gibbs crawls on a correlated Gaussian
+
+Sec. 3.1 asserts that for the bivariate Gaussian with correlation $\rho$ the
+systematic-scan sub-chain in $x_1$ is AR(1) with coefficient $\rho^2$. Prove it,
+derive the integrated autocorrelation time, and evaluate it at
+$\rho \in \{0.9, 0.99\}$.
+
+<details>
+<summary>Solution</summary>
+
+Standardize to unit marginals. The conditionals are
+$x_1 \mid x_2 \sim N(\rho x_2,\, 1-\rho^2)$ and symmetrically for $x_2$. One
+systematic sweep, with independent $\xi_t, \eta_t \sim N(0,1)$:
+
+$$x_1^{t} = \rho\, x_2^{t-1} + \sqrt{1-\rho^2}\,\xi_t, \qquad
+x_2^{t} = \rho\, x_1^{t} + \sqrt{1-\rho^2}\,\eta_t.$$
+
+Substitute the second (at $t-1$) into the first:
+
+$$x_1^{t} = \rho\big(\rho\,x_1^{t-1} + \sqrt{1-\rho^2}\,\eta_{t-1}\big) + \sqrt{1-\rho^2}\,\xi_t
+= \rho^2 x_1^{t-1} + \underbrace{\rho\sqrt{1-\rho^2}\,\eta_{t-1} + \sqrt{1-\rho^2}\,\xi_t}_{\text{innovation}}.$$
+
+The innovation is a sum of independent Gaussians with variance
+$\rho^2(1-\rho^2) + (1-\rho^2) = 1-\rho^4$, so the stationary variance is
+$(1-\rho^4)/(1-\rho^4) = 1$ — consistent with the correct marginal, a useful
+sanity check that no invariance was lost. For AR(1) with coefficient $a$,
+$\text{corr}(x_t, x_{t+k}) = a^{k}$, so
+
+$$\tau = 1 + 2\sum_{k\ge1} a^k = \frac{1+a}{1-a} = \frac{1+\rho^2}{1-\rho^2}.$$
+
+At $\rho = 0.9$: $\tau \approx 9.5$. At $\rho = 0.99$: $\tau \approx 99.5$ — a
+tenfold collapse in effective sample size for a tenfold approach of $\rho$ to 1.
+The geometry behind it: each coordinate update can only move parallel to an
+axis, while the target's mass lies along the diagonal, so the chain must
+staircase along a ridge whose width is $\sqrt{1-\rho^2}$. HMC (Sec. 4) escapes
+this because its trajectories are not axis-aligned, and a mass matrix (Sec. 4.8)
+does not fix it either — a diagonal metric rescales axes, it cannot rotate them.
+
+*Check it:* `tests/test_gibbs.py::test_gibbs_mixing_slows_as_correlation_grows`
+measures the lag-1 autocorrelation at $\rho \in \{0.5, 0.95\}$ against
+$\rho^2$; `experiments/gibbs_scan.py` reports the ESS consequence.
+
+</details>
+
+### Exercise 4 — Leapfrog keeps its guarantees under a mass matrix
+
+Sec. 4.8 replaces the kinetic energy with $K(p) = \tfrac12 p^\top M^{-1} p$ for
+diagonal $M$, so the leapfrog drift becomes $x \mathrel{+}= \varepsilon\, M^{-1}p$.
+
+**(a)** Show the modified step is still volume-preserving and reversible, so the
+accept rule of Sec. 4.4 is unchanged at $\min(1, e^{-\Delta H})$.
+
+**(b)** Show that HMC with mass matrix $M$ on target $\pi(x)$ is the *same
+algorithm* as identity-mass HMC on the transformed target obtained by
+$y = M^{1/2}x$. What does that say about which $M$ to want?
+
+<details>
+<summary>Solution</summary>
+
+**(a)** Nothing structural changed. The drift is still a map
+$(x,p)\mapsto(x + \varepsilon M^{-1}p,\; p)$, whose Jacobian is
+$\begin{pmatrix} I & \varepsilon M^{-1}\\ 0 & I\end{pmatrix}$ — upper triangular
+with unit diagonal, determinant 1. The kicks are unchanged and likewise unit
+Jacobian, and the composition is still palindromic, so momentum flip still
+retraces the trajectory. Volume preservation and involutivity are the *only*
+two properties the Sec. 4.4 proof uses, so the acceptance probability keeps its
+form, with $H = U(x) + \tfrac12 p^\top M^{-1}p$ and momenta refreshed from
+$p \sim N(0, M)$ so the augmented target still factorizes. This is why the
+metric can enter *only* through the drift: had it also multiplied the gradient
+in the kick, the map would no longer be the same shear composition.
+
+**(b)** Put $y = M^{1/2}x$ and $q = M^{-1/2}p$. Then
+$K = \tfrac12 p^\top M^{-1}p = \tfrac12 q^\top q$ and the drift becomes
+$y \mathrel{+}= \varepsilon q$: exactly identity-mass leapfrog on the target
+$\pi_M(y) \propto \pi(M^{-1/2}y)$. The two runs are in bijection step for step
+(the momentum draws correspond because $p\sim N(0,M) \iff q \sim N(0,I)$).
+
+So choosing $M$ *is* choosing a linear reparameterization of the target, and the
+ideal $M$ is the one that makes $\pi_M$ isotropic — i.e. $M^{-1} \approx
+\text{Cov}_\pi(x)$, which is exactly what warmup estimates. It also says what a
+diagonal $M$ cannot do: $M^{1/2}$ diagonal is an axis-wise rescaling, so it can
+equalize marginal scales but never rotate a correlated target into isotropy.
+The measured consequence is in Sec. 4.8 — flat ESS across scale ratios
+$r \in \{2..50\}$ on a diagonal target, but only $2.4\times$ on eight schools'
+$\log\tau$, whose difficulty is curvature rather than scale.
+
+</details>
+
+### Exercise 5 — The replica-exchange acceptance probability
+
+`mcmc/tempering.py` runs $K$ chains at inverse temperatures
+$\beta_1 = 1 > \beta_2 > \dots > \beta_K$, targeting the product
+
+$$\Pi(x_1,\dots,x_K) \;\propto\; \prod_{k=1}^{K} \pi(x_k)^{\beta_k},$$
+
+and periodically proposes swapping the states of two adjacent replicas.
+
+**(a)** Derive the acceptance probability of the swap $(x_i, x_j) \to (x_j, x_i)$
+and check it against the one line of code that implements it.
+
+**(b)** The proposal is deterministic. Why is that legitimate, and what does it
+have in common with the HMC accept step?
+
+**(c)** What does the answer say about how to space the $\beta$ ladder?
+
+<details>
+<summary>Solution</summary>
+
+**(a)** The swap changes only replicas $i$ and $j$, so every other factor of
+$\Pi$ cancels. With $L_k = \log\pi(x_k)$,
+
+$$\frac{\Pi(\dots x_j \dots x_i \dots)}{\Pi(\dots x_i \dots x_j \dots)}
+= \frac{\pi(x_j)^{\beta_i}\pi(x_i)^{\beta_j}}{\pi(x_i)^{\beta_i}\pi(x_j)^{\beta_j}}
+= \exp\Big[(\beta_i - \beta_j)\,(L_j - L_i)\Big],$$
+
+so $\alpha = \min\big(1, \exp[(\beta_i-\beta_j)(L_j - L_i)]\big)$. That is
+literally `delta = (betas[i] - betas[i+1]) * (lp[i+1] - lp[i])` in
+`tempering.py`, with the untempered $\log\pi$ values cached per replica — which
+is also why a swap costs **zero** density evaluations. Note the pleasing sign
+structure: $\beta_i > \beta_j$ (colder first), so the swap is always accepted
+when $L_j > L_i$, i.e. when the hotter replica has wandered somewhere the colder
+one likes better. That is the mechanism by which mode-hopping propagates down
+the ladder.
+
+**(b)** A swap is a deterministic, *involutive* map on the product state space
+(swap twice and you are back), and it is a permutation of coordinates, hence
+volume-preserving. Those are precisely the two hypotheses of the Sec. 4.4
+argument, so the same detailed-balance proof applies verbatim with $\Pi$ in
+place of the augmented HMC target — the trajectory-plus-flip of HMC and the
+replica swap are the same theorem used twice. (The alternating even/odd parity
+in the code is only there to keep the swapped pairs disjoint within a sweep, so
+each is a valid kernel on its own.)
+
+**(c)** The exponent is a product of a ladder-spacing term $(\beta_i - \beta_j)$
+and a *data* term $(L_j - L_i)$, whose typical size is set by how much the
+distribution of $\log\pi$ differs between the two temperatures — roughly the
+spread of $\log\pi$ under each. Rungs too far apart make $|(\beta_i-\beta_j)(L_j-L_i)|$
+large and negative most of the time, so swaps are rejected and the ladder is a
+chain of disconnected samplers; rungs too close waste compute on replicas that
+all sample nearly the same thing. Both failure modes are visible in
+`extras['swap_rates']`, which is the diagnostic to tune the geometric ladder
+against.
+
+</details>
 
 ## References
 
