@@ -411,6 +411,39 @@ batching at any chain count is pinned in `tests/test_vectorized_scaling.py`.
 
 ![vectorized scaling](figures/vectorized_scaling.png)
 
+### Appendix: from MALA to score-based generative models
+
+`mcmc/mala.py` is one Euler step along $\nabla\log\pi$ plus Gaussian noise,
+with the asymmetric Hastings correction that makes it exact. Delete the accept
+step and the same update is the *unadjusted* Langevin algorithm, and the
+deletion is not free: on $\pi = N(0,1)$ the chain becomes AR(1) with stationary
+variance $1/(1-\varepsilon^2/4)$, over-dispersed by 6.7% at $\varepsilon = 0.5$
+and 19% at $0.8$ — a bias that more samples do not remove, only a smaller step
+does. That is Exercise 1(c) in [`theory/derivations.md`](theory/derivations.md)
+Sec. 7, and `tests/test_mala.py` measures both chains against it.
+
+Score-based generative models run exactly that biased sampler, and not for
+speed. They have a *learned* $\nabla\log\pi$ and no normalized density, so
+there is nothing to put in a Metropolis ratio: the accept step is unavailable
+in principle, not skipped. Two changes make it work anyway. First the target is
+softened — sample a sequence of noised densities $\pi * N(0,\sigma_i^2 I)$ from
+large $\sigma$ down to small, carrying the state forward, so the multimodality
+that traps a single Langevin chain (the failure `experiments/tempering.py`
+attacks here with replica exchange instead) is solved at the scale where the
+modes have been smeared together. Second the step size is tied to the level,
+$\varepsilon_i^2 \propto \sigma_i^2$, and it has a ceiling that holds for *any*
+target: writing the noised score as a posterior mean gives
+$\nabla s_\sigma \succeq -I/\sigma^2$, so the linearized update contracts only
+while $\varepsilon^2 < 4\sigma^2$ — the same $4$ as in the variance formula
+above.
+
+Nothing there is a better MCMC method. It is a worse one, run on a target
+nobody can write down, under an annealing schedule that buys back the mixing
+the accept step was not there to fix. A companion repo,
+`diffusion-from-scratch`, builds that side of the bridge on 2D targets whose
+scores are known in closed form.
+<!-- TODO(Day 28): link diffusion-from-scratch once the repo is public. -->
+
 ## Reproduce
 
 One command, from a clean clone:
