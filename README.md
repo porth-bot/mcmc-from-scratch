@@ -440,9 +440,19 @@ above.
 Nothing there is a better MCMC method. It is a worse one, run on a target
 nobody can write down, under an annealing schedule that buys back the mixing
 the accept step was not there to fix. A companion repo,
-`diffusion-from-scratch`, builds that side of the bridge on 2D targets whose
-scores are known in closed form.
-<!-- TODO(Day 28): link diffusion-from-scratch once the repo is public. -->
+[diffusion-from-scratch](https://github.com/porth-bot/diffusion-from-scratch),
+builds that side of the bridge on 2D targets whose scores are known in closed
+form — which is what makes the price of the missing accept step measurable
+rather than argued: run its samplers on the exact score and on a learned one
+and the difference is the estimation error, on its own. Two findings there
+are about this paragraph. The step-size ceiling above is enforced in code,
+because an unstable ladder does not blow up visibly — it returns samples with
+the right support and the wrong mode weights. And running the annealed
+Langevin sampler *longer* with a learned score makes it **worse** (sliced
+$W_2$ 0.274 → 0.807 at ten times the budget), because an equilibrium sampler
+converges to the stationary law of the score it was handed; the same sampler
+with the exact score does not degrade. The accept step is what would have
+caught that, and it is the thing that is not available.
 
 ## Reproduce
 
