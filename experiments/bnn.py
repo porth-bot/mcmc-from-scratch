@@ -114,6 +114,52 @@ def predict(model, hmc_res, point, ensemble, grid):
     }
 
 
+def mass_matrix_study(model, grid, n_samples=2000, n_warmup=1500, n_seeds=3):
+    """Identity metric vs an adapted diagonal metric on the weight posterior.
+
+    Section 7 measures diagonal mass-matrix adaptation on targets whose scales
+    are known (a diagonal Gaussian, eight schools). This is the same knob on a
+    posterior nobody wrote down: 49 weights whose marginal scales are set by
+    where each hidden unit happened to land, not by a modeller.
+
+    The two arms are the *same* run apart from ``adapt_mass``: paired seeds,
+    identical initial points, identical budget and dual-averaging target.
+    Efficiency is reported in function space (raw-weight ESS is symmetry junk,
+    as above) and per 1000 gradient evaluations, since the metric costs no
+    extra gradients. Repeated over ``n_seeds`` because a single ESS estimate on
+    a slow coordinate is high-variance -- the same reason experiment 9 averages
+    its cells -- and reported as the median across seeds.
+    """
+    out = []
+    for adapt in (False, True):
+        rows = []
+        for s in range(n_seeds):
+            rng = np.random.default_rng(SEED + 1 + s)
+            x0 = 0.1 * rng.standard_normal((8, model.dim))
+            res = hmc(
+                model, x0, n_samples=n_samples, step_size=0.01, n_leapfrog=30,
+                rng=rng, n_warmup=n_warmup, adapt_step_size=True,
+                target_accept=0.9, adapt_mass=adapt,
+            )
+            pred = prediction_chains(model, res.samples, grid)
+            e = np.array([ess(pred[:, :, j]) for j in range(grid.size)])
+            rows.append((
+                res.extras["step_size"], float(res.accept_rate.mean()),
+                res.extras["n_divergent"], float(e.min()), float(np.median(e)),
+                float(np.median(e) / res.extras["n_grad_evals"] * 1000),
+                float(res.extras["inv_mass"].max() / res.extras["inv_mass"].min()),
+            ))
+        med = np.median(np.array(rows), axis=0)
+        out.append({
+            "metric": "adapted diagonal" if adapt else "identity",
+            "step": med[0], "accept": med[1],
+            "diverg": int(sum(r[2] for r in rows)),
+            "ESS_min": med[3], "ESS_med": med[4], "ESS/1k_grad": med[5],
+            "scale_spread": med[6],
+        })
+    return out
+
+
 def main():
     model, (X, y), (X_test, y_test), hmc_res, point, ensemble = run()
     print(f"HMC mean accept {hmc_res.accept_rate.mean():.2f}, "
@@ -135,6 +181,13 @@ def main():
           f"max {pred_rhat.max():.3f}")
     print(f"  prediction ESS              : min {pred_ess.min():.0f}, "
           f"median {np.median(pred_ess):.0f}  (of {8 * 2000} draws)")
+
+    # ---- does a diagonal metric help this 49-dim posterior? ----------------
+    mm = mass_matrix_study(model, grid)
+    print("\nDiagonal mass matrix on the weight posterior (Sec. 7's knob, "
+          "here on a posterior nobody wrote down):")
+    print_table(mm, ["metric", "step", "accept", "diverg",
+                     "ESS_min", "ESS_med", "ESS/1k_grad", "scale_spread"])
 
     # ---- calibration on held-out points, split observed vs gap -------------
     bands = predict(model, hmc_res, point, ensemble, X_test)

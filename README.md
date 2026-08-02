@@ -191,6 +191,26 @@ to 0.30, NLL blows up to 2.47). The deep ensemble widens and is the strong
 cheap baseline, but still under-covers the gap (0.57). HMC widens the most and
 stays calibrated (1.00 / NLL 0.08).
 
+**Does the section 7 metric help here? No — measured, three paired seeds.**
+The obvious next knob on a 49-dimensional posterior is the diagonal mass
+matrix: warmup estimates each coordinate's marginal variance and preconditions
+it to unit scale. The adapted scales do span 7.4×, so there is anisotropy to
+find. It buys nothing (median over three seeds, arms differing only in
+`adapt_mass`):
+
+| metric | step size | accept | median pred. ESS | ESS / 1k gradients | divergences |
+|---|---|---|---|---|---|
+| identity | 0.004 | 0.90 | 927 | 1.180 | 0 |
+| adapted diagonal | 0.003 | 0.91 | 904 | 1.151 | 1 |
+
+The step size does not go *up*, which is the tell: the curvature that limits it
+was never a per-axis scale. This posterior is invariant to permuting hidden
+units and to sign flips, so a coordinate's marginal variance is a spread across
+symmetric modes rather than the width of the basin a chain is sitting in, and
+rescaling by it does not line up with the local Hessian. A diagonal metric
+rescales axes and cannot rotate them (§7 says so on a target where the axes
+were the right ones); here they are not.
+
 **Convergence is judged in function space, on purpose.** The weight posterior
 is invariant to permuting hidden units and to sign-flipping (tanh is odd), so
 it is massively multimodal and split-$\hat R$ on a raw weight coordinate is
@@ -461,7 +481,7 @@ One command, from a clean clone:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 13 experiments: ~2.5 min total
+./reproduce.sh                  # tests, then all 13 experiments: ~4 min total
 ```
 
 `requirements.txt` pins the exact versions every committed figure and table was
@@ -487,7 +507,7 @@ python gibbs_scan.py            # ~2 s   (systematic vs random scan)
 python funnel.py                # ~12 s
 python eight_schools.py         # ~6 s
 python tempering.py             # ~2 s   (bimodal: tempering vs a trapped chain)
-python bnn.py                   # ~8 s   (Bayesian NN: HMC vs ensemble vs MAP)
+python bnn.py                   # ~110 s (Bayesian NN: HMC vs ensemble vs MAP, + the metric study)
 python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
 python mass_matrix.py           # ~35 s  (diagonal metric: scale-free efficiency)
 python rank_rhat.py             # ~1 s   (rank-normalized R-hat: heavy-tail robustness)
@@ -537,8 +557,12 @@ state to warm up: the "log" this repo replays from is the seed plus the code.
 - **Phase 2 (done):** Bayesian neural network posterior via this repo's HMC on
   a small MLP — predictive uncertainty and calibration vs a MAP point estimate
   and a deep ensemble ([`experiments/bnn.py`](experiments/bnn.py), section 5).
-  Next on this thread: a diagonal mass matrix so HMC does not need such a small
-  step size on the ~49-dim weight posterior.
+  The diagonal mass matrix that used to sit here as the next step on this
+  thread has been run and does not help (§5): the step size stays where it was,
+  because on a posterior with permutation and sign symmetries a marginal
+  variance is not the local scale. What would need testing next is a metric
+  estimated from *curvature* rather than from marginal spread, on a
+  symmetry-broken parameterization.
 
 ## References
 
@@ -563,6 +587,7 @@ buried.
 | [gp-from-scratch](https://github.com/porth-bot/gp-from-scratch) | GP regression, kernels with hand-derived gradients, ML-II, and the NTK/NNGP wide-network correspondence |
 | [grokking-transformer](https://github.com/porth-bot/grokking-transformer) | A transformer that groks modular arithmetic, and the Fourier circuit it learns |
 | [pinn-from-scratch](https://github.com/porth-bot/pinn-from-scratch) | Physics-informed networks: exact autograd PDE residuals against closed-form solutions |
+| [diffusion-from-scratch](https://github.com/porth-bot/diffusion-from-scratch) | Score matching, reverse-time samplers, and the probability-flow ODE — against exact scores at every noise level |
 
 The tie to gp-from-scratch is concrete, not decorative. Its NTK section shows
 that an *infinite*-width network's posterior is a Gaussian process with a
