@@ -131,15 +131,19 @@ class BayesianNNRegression:
             - 0.5 * np.sum(theta**2, axis=1) / self.prior_var
         )
 
-    def grad_logpdf(self, theta: np.ndarray) -> np.ndarray:
-        theta = np.atleast_2d(theta)
+    def _grad_loglik(
+        self, theta: np.ndarray, idx: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Gradient of the log *likelihood* over data points ``idx`` (all by
+        default). Backprop through the tanh layer, batched over chains."""
         W1, b1, w2, b2 = self._unpack(theta)
-        x = self.X
+        x = self.X if idx is None else self.X[idx]
+        y = self.y if idx is None else self.y[idx]
         a = W1[:, :, None] * x[None, None, :] + b1[:, :, None]  # (C, H, N)
         z = np.tanh(a)
         f = np.einsum("ch,chi->ci", w2, z) + b2[:, None]  # (C, N)
 
-        g = (self.y[None, :] - f) / self.noise_var  # dL/df_i, (C, N)
+        g = (y[None, :] - f) / self.noise_var  # dL/df_i, (C, N)
         # output layer
         grad_b2 = np.sum(g, axis=1)  # (C,)
         grad_w2 = np.einsum("ci,chi->ch", g, z)  # (C, H)
@@ -148,10 +152,41 @@ class BayesianNNRegression:
         grad_b1 = np.sum(delta, axis=2)  # (C, H)
         grad_W1 = np.einsum("chi,i->ch", delta, x)  # (C, H)
 
-        grad = np.concatenate(
-            [grad_W1, grad_b1, grad_w2, grad_b2[:, None]], axis=1
-        )
+        return np.concatenate([grad_W1, grad_b1, grad_w2, grad_b2[:, None]], axis=1)
+
+    def grad_logpdf(self, theta: np.ndarray) -> np.ndarray:
+        theta = np.atleast_2d(theta)
+        grad = self._grad_loglik(theta)
         return grad - theta / self.prior_var  # add the Gaussian-prior gradient
+
+    def grad_logpdf_minibatch(
+        self, theta: np.ndarray, batch_size: int, rng: np.random.Generator
+    ) -> np.ndarray:
+        """Unbiased minibatch estimate of ``grad_logpdf`` -- the SGLD hook.
+
+        The prior gradient is exact (it costs nothing, being a single term),
+        and the likelihood gradient is rescaled by ``N / batch_size``:
+
+            ghat = grad log prior + (N / n) sum_{i in B} grad log p(y_i | theta)
+
+        which is unbiased for the full gradient because ``B`` is a uniform
+        sample without replacement, so each term appears with probability
+        ``n / N``. All chains share one minibatch per call. That is the
+        standard choice and it is not innocent -- it correlates the gradient
+        noise across chains, so R-hat and any between-chain variance estimate
+        see less disagreement than independent minibatches would produce.
+
+        Sampling *without* replacement also makes the estimator's variance
+        vanish at ``batch_size == n_data``, where it reduces exactly to
+        ``grad_logpdf``.
+        """
+        theta = np.atleast_2d(theta)
+        n_data = self.X.shape[0]
+        if not (1 <= batch_size <= n_data):
+            raise ValueError(f"batch_size must be in [1, {n_data}]")
+        idx = rng.choice(n_data, size=batch_size, replace=False)
+        scale = n_data / batch_size
+        return scale * self._grad_loglik(theta, idx) - theta / self.prior_var
 
     # -- convenience for experiments -------------------------------------
     def posterior_predictive(

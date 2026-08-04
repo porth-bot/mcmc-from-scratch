@@ -9,6 +9,14 @@ Samplers accept a *target object* with:
   uses log-density *differences*.
 - ``grad_logpdf(x)``: gradient of ``logpdf`` w.r.t. ``x``, same shape as ``x``
   (only required by gradient-based samplers, i.e. HMC).
+- ``grad_logpdf_minibatch(x, batch_size, rng)``: optional, and only
+  ``mcmc/sgld.py`` asks for it. An *unbiased* estimate of ``grad_logpdf``
+  computed from ``batch_size`` data points. Targets that are not posteriors
+  over a dataset have nothing to subsample and simply do not implement it.
+
+Note that SGLD calls no ``logpdf`` at all: not needing the full-data density
+is the whole reason the method exists, so a target can implement only the two
+gradient methods and still be sampled by it.
 
 All chains advance in lockstep as one batched NumPy computation, so running
 4 or 32 chains costs nearly the same wall-clock per iteration.
