@@ -2,9 +2,10 @@
 
 Everything the code does, proved or derived. Sections map onto modules:
 Sec. 2 → `mcmc/metropolis.py`, Sec. 3 → `mcmc/gibbs.py`, Sec. 4 → `mcmc/hmc.py`
-and `mcmc/nuts.py`, Sec. 5 → `mcmc/models.py`, Sec. 6 → `mcmc/diagnostics.py`.
-Sec. 7 is a set of exercises over the whole document, with collapsed solutions
-and a pointer to the test or experiment that checks each answer.
+and `mcmc/nuts.py`, Sec. 5 → `mcmc/models.py`, Sec. 6 → `mcmc/diagnostics.py`,
+Sec. 7 → `mcmc/ais.py`. Sec. 8 is a set of exercises over the whole document,
+with collapsed solutions and a pointer to the test or experiment that checks
+each answer.
 
 ## 1. The problem
 
@@ -675,7 +676,98 @@ $1$ and $6$ the location terms are both $1.00$ and only $\hat R_{\text{fold}}
 closed form: we use Acklam's rational approximation refined by a single Halley
 step against the exact CDF (error $< 10^{-8}$), keeping the package numpy-only.
 
-## 7. Exercises
+## 7. Annealed importance sampling: what MCMC throws away
+
+Every sampler above works on an unnormalized density $f$, because the accept
+ratio $f(x')/f(x)$ never sees $Z = \int f$. That invariance is the reason MCMC
+is usable on posteriors, and it is also why none of these samplers can report
+the marginal likelihood, the Bayes factor, or the free energy — all of which
+*are* $Z$.
+
+**Importance sampling, and why one proposal is not enough.** For a proposal
+$q$ that can be sampled and evaluated,
+
+$$Z = \int f(x)\,dx = \int \frac{f(x)}{q(x)} q(x)\, dx = \mathbb{E}_q\!\left[\frac{f(x)}{q(x)}\right],$$
+
+so $\hat Z = \frac1N \sum_i f(x_i)/q(x_i)$ is unbiased for any $N$. Its
+variance is another matter: $\operatorname{Var}_q(f/q)$ is finite only if
+$\int f^2/q < \infty$, which fails whenever $q$ has lighter tails than $f$
+anywhere that matters. In $d$ dimensions the mismatch compounds — for two
+Gaussians differing in scale by a factor $s$ per coordinate, the weight
+variance grows like $s^{d}$ — so the estimator becomes one draw carrying all
+the weight while the sample mean drifts up whenever a rarer draw arrives.
+
+**The annealed construction (Neal 2001).** Interpolate. Fix a ladder
+$0 = \beta_0 < \beta_1 < \dots < \beta_T = 1$ and define
+
+$$f_j(x) = f_0(x)^{1-\beta_j} f_T(x)^{\beta_j}, \qquad Z_j = \int f_j,$$
+
+so $f_0$ is a tractable start (samplable, $Z_0$ known) and $f_T$ is the target.
+Let $T_j$ be any Markov transition leaving $p_j = f_j / Z_j$ invariant. Draw
+$x_0 \sim p_0$, then $x_j \sim T_j(\cdot \mid x_{j-1})$ for $j = 1, \dots, T-1$,
+and set
+
+$$w = \prod_{j=1}^{T} \frac{f_j(x_{j-1})}{f_{j-1}(x_{j-1})}.$$
+
+**Claim: $\mathbb{E}[w] = Z_T / Z_0$ exactly**, for every $T$, every ladder, and
+every choice of invariant transitions.
+
+*Proof.* Read the whole trajectory as one importance-sampling problem. The
+forward process has density
+
+$$q(x_0, \dots, x_{T-1}) = p_0(x_0) \prod_{j=1}^{T-1} T_j(x_j \mid x_{j-1}).$$
+
+Define a *target* on the same space using the reversals of those kernels,
+
+$$p(x_0, \dots, x_{T-1}) = \frac{f_T(x_{T-1})}{Z_T} \prod_{j=1}^{T-1} \tilde T_j(x_{j-1} \mid x_j), \qquad
+\tilde T_j(x' \mid x) = T_j(x \mid x') \frac{p_j(x')}{p_j(x)},$$
+
+where $\tilde T_j$ is the reversal of $T_j$ with respect to $p_j$ and is a
+normalized transition density precisely because $T_j$ leaves $p_j$ invariant.
+Now form the ratio $p/q$. Each reversal contributes
+$T_j(x_j \mid x_{j-1}) f_j(x_{j-1}) / f_j(x_j)$, the forward kernels cancel
+term by term, and what survives telescopes into
+
+$$\frac{p(x_{0:T-1})}{q(x_{0:T-1})} = \frac{Z_0}{Z_T} \prod_{j=1}^{T} \frac{f_j(x_{j-1})}{f_{j-1}(x_{j-1})} = \frac{Z_0}{Z_T} w .$$
+
+Taking $\mathbb{E}_q$ of both sides gives $\mathbb{E}_q[p/q] = 1$, hence
+$\mathbb{E}[w] = Z_T/Z_0$. $\blacksquare$
+
+Two things the proof does *not* need, and it is worth noticing which: the
+transitions do not have to be ergodic, and they do not have to mix at all. If
+they do nothing, $w$ collapses to the plain importance weight and the estimate
+is still unbiased — just as bad-variance as before. Annealing buys variance,
+never correctness.
+
+**The geometric path, in the form the code computes.** With
+$f_j = f_0^{1-\beta_j} f_T^{\beta_j}$,
+
+$$\log \frac{f_j(x)}{f_{j-1}(x)} = (\beta_j - \beta_{j-1})\,\big[\log f_T(x) - \log f_0(x)\big],$$
+
+so the whole log weight is one running sum of $\Delta\beta$ times a
+log-density gap, each evaluated at the state *before* that rung's transition:
+
+$$\log w = \sum_{j=1}^{T} (\beta_j - \beta_{j-1}) \big[\log f_T(x_{j-1}) - \log f_0(x_{j-1})\big].$$
+
+**Unbiased in $Z$, biased in $\log Z$.** Everyone reports $\log Z$, and
+$\log \hat Z$ is not unbiased for it. By Jensen,
+
+$$\mathbb{E}[\log \hat Z] \le \log \mathbb{E}[\hat Z] = \log Z,$$
+
+with equality only if $\hat Z$ is constant. The bias is *always downward*, so a
+ladder that is too short does not scatter around the truth — it reports too
+little evidence. Its size is $O(1/N)$ at leading order, which is what licenses
+the leave-one-out jackknife correction in `mcmc/ais.py`; the residual bias is
+$O(1/N^2)$, and neither is any use when a single particle holds all the weight.
+
+**The diagnostic.** With normalized weights $\bar w_i$, the effective sample
+size $\mathrm{ESS} = (\sum_i w_i)^2 / \sum_i w_i^2$ lies in $[1, N]$ and equals
+$N$ exactly when all weights are equal. It is the only warning available when
+there is no known $Z$ to check against — and, being a function of the same
+weights that produced the estimate, it can be fooled by the same failure: if no
+particle ever visited a mode, neither the estimate nor the ESS will mention it.
+
+## 8. Exercises
 
 Five problems over the material above, in rough order of the sections they lean
 on. Each is answerable with the definitions already given — no outside results
@@ -947,6 +1039,7 @@ against.
 - Geman & Geman (1984), *IEEE TPAMI* 6 (Gibbs sampling).
 - Duane, Kennedy, Pendleton & Roweth (1987), *Phys. Lett. B* 195 (hybrid Monte Carlo).
 - Neal (2011), "MCMC using Hamiltonian dynamics", *Handbook of MCMC*. The canonical HMC reference.
+- Neal (2001), "Annealed importance sampling", *Stat. Comput.* 11 (Sec. 7).
 - Neal (2003), "Slice sampling", *Ann. Statist.* 31 (the funnel, Sec. 8).
 - Hoffman & Gelman (2014), "The No-U-Turn Sampler", *JMLR* 15 (dual averaging, Alg. 5).
 - Geyer (1992), "Practical Markov chain Monte Carlo", *Statist. Sci.* 7 (initial sequence estimators).
