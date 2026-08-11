@@ -58,6 +58,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction — RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
 | [`mcmc/sgld.py`](mcmc/sgld.py) | Stochastic gradient Langevin dynamics (Welling & Teh 2011): MALA with the accept step deleted and the gradient replaced by a minibatch estimate. Unadjusted, so it does **not** target $\pi$ — the point of the module is measuring how far off it is. On a Gaussian the stationary law is exactly $N(0,\ s^2/(1 - \epsilon^2/4s^2))$, a closed form the tests check at over-dispersions from 0.25% to 96%. The minibatch noise is negligible only below $\epsilon = 2/\sqrt{\mathrm{Var}[\hat g]}$, measured at $\approx 0.0045$ on the BNN posterior with batch 20 of 200 — *smaller* than a step one would actually run there |
 | [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
+| [`mcmc/ais.py`](mcmc/ais.py) | **Annealed importance sampling** (Neal 2001): the normalizing constant every other sampler here throws away, since $Z$ cancels out of every accept ratio. Geometric path from a tractable $p_0$ to the target, weights accumulated along the way, $\mathbb{E}[w] = Z_T/Z_0$ **exactly** — proof in [theory](theory/derivations.md) §7, in the extended trajectory space. Reports log $Z$, the weight ESS in log space, and a jackknife correction for the $O(1/N)$ bias of log-of-a-mean (§10) |
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021 — Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
 | [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
 | [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
@@ -408,6 +409,73 @@ choosing good coordinates, not a fancier integrator.
 
 <p align="center"><img src="figures/nuts_funnel_divergences.png" width="720"></p>
 
+### 10. The normalizing constant, and what it costs (`experiments/ais.py`)
+
+Every sampler above works on an unnormalized density because $Z$ cancels out of
+the accept ratio — which is also why none of them can report a marginal
+likelihood or a Bayes factor. `mcmc/ais.py` is the one thing here that can.
+Ground truth is free: each target is a normalized density times $e^{2.5}$, so
+$\log Z = 2.5$ exactly, in every dimension.
+
+**At a fixed budget, annealing is not automatically worth it.** Cost is
+$T \times k \times N$ target evaluations, so a longer ladder means fewer
+particles. Sweeping $T$ with the budget held at 40,000, over 40 replicates:
+
+| | $T=1$ (plain IS) | $T=10$ | $T=100$ | $T=500$ | best |
+|---|---|---|---|---|---|
+| $d = 4$, RMSE of $\log Z$ | **0.072** | 0.142 | 0.186 | 0.160 | $T = 1$ |
+| $d = 8$, RMSE of $\log Z$ | 1.091 | 2.154 | 0.926 | **0.595** | $T = 500$ |
+
+At $d = 4$ plain importance sampling wins by 2.6×, and it is not an untuned
+comparison: eight settings of ladder length, step size, and transitions per
+rung were tried, and the best annealed one is 0.186. At $d = 8$ the ordering
+reverses and annealing is worth 1.8×.
+
+The column that reconciles them is the effective particle count, not the ESS
+*fraction* the diagnostic reports. At $d = 4$, $T = 1$ has an ESS fraction of
+0.005 — which sounds catastrophic — but 0.005 of 40,000 particles is **182**
+effective ones, while $T = 500$ turns a fraction of 0.352 into **28**. A ladder
+buys ESS fraction by spending the particles it is a fraction of, and only wins
+when the fraction was so small that there was nothing left to spend: at
+$d = 8$, $T = 1$ is down to **4.0** effective particles out of 40,000.
+
+**Unbiased in $Z$, biased low in $\log Z$, and the size is not small.** With a
+deliberately mismatched proposal at $d = 4$ and $T = 1$ (120 replicates per
+row), the estimate of $\log Z$ sits *below* the truth by
+
+| $N$ | 50 | 100 | 200 | 400 | 800 | 1600 |
+|---|---|---|---|---|---|---|
+| bias (nats) | −6.06 | −3.74 | −2.12 | −1.24 | −0.67 | −0.31 |
+| after jackknife | −1.81 | −1.11 | −0.37 | −0.38 | −0.19 | −0.01 |
+
+Jensen fixes the sign, so an under-resourced run *understates* the evidence
+rather than scattering around it — the failure that quietly decides a Bayes
+factor. The jackknife removes most of it (a factor of 3–20 here) and not all.
+And the decay is slower than the $O(1/N)$ leading term predicts over this
+range: $N \times \text{bias}$ drifts from −303 to −493 instead of settling, so
+the higher-order terms are still doing real work at $N = 1600$.
+
+**Where it lies to you — not where I expected.** Two Gaussians 12 apart, the
+target §4 built parallel tempering for, and no transition here ever crosses the
+barrier. AIS gets it right anyway (error −0.04): its independence comes from
+drawing $p_0$ afresh every particle, not from the chain mixing, so a $p_0$ that
+straddles both modes fixes the weights without anything ever crossing. The
+genuine failure needs a $p_0$ that never proposes into a mode:
+
+| $p_0$ | $\log Z$ | error | predicted | ESS fraction |
+|---|---|---|---|---|
+| broad, covers both | 2.460 | −0.040 | — | 0.506 |
+| narrow on left mode | 1.450 | **−1.050** | $\log 0.35 = -1.050$ | **1.000** |
+| narrow on right mode | 2.069 | **−0.431** | $\log 0.65 = -0.431$ | **1.000** |
+
+Both failures are exact rather than noisy — the estimate is short by precisely
+the log of the mass it never saw — and both report a *perfect* effective sample
+size, because the weights within the one mode it can see are uniform. The only
+diagnostic available without ground truth is at its most reassuring exactly
+when the answer is wrong.
+
+<p align="center"><img src="figures/ais.png" width="960"></p>
+
 ### Appendix: batched chains scale almost for free
 
 Every sampler advances all its chains in lockstep as one batched NumPy
@@ -482,7 +550,7 @@ One command, from a clean clone:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 13 experiments: ~4 min total
+./reproduce.sh                  # tests, then all 14 experiments: ~5 min total
 ```
 
 `requirements.txt` pins the exact versions every committed figure and table was
@@ -490,7 +558,7 @@ produced with (Python 3.12.13); `pyproject.toml` keeps lower bounds instead, so
 CI goes on testing against current releases on 3.9 and 3.12.
 
 **How exact is it?** Rerunning the whole suite in that pinned environment
-regenerates 19 of the 20 committed PNGs byte-for-byte — the samplers are seeded
+regenerates 20 of the 21 committed PNGs byte-for-byte — the samplers are seeded
 and NumPy's bit generators are stable across versions, so the chains, and
 therefore the ESS and R-hat tables, are identical. The one file that differs is
 `vectorized_scaling.png`, which plots wall-clock per step and so measures the
@@ -514,6 +582,7 @@ python mass_matrix.py           # ~35 s  (diagonal metric: scale-free efficiency
 python rank_rhat.py             # ~1 s   (rank-normalized R-hat: heavy-tail robustness)
 python nuts_benchmark.py        # ~35 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
 python vectorized_scaling.py    # ~3 s   (wall-clock per step vs chain count)
+python ais.py                   # ~40 s  (annealed importance sampling: log Z against exact)
 ```
 
 (Those are measured, not estimated: the timings come from the `reproduce.sh`
