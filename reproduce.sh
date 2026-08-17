@@ -70,6 +70,7 @@ step "10. rank-normalized split-R-hat"                             experiments/r
 step "11. NUTS vs fixed-L HMC vs RWMH"                             experiments/nuts_benchmark.py
 step "12. vectorized-chains scaling appendix"                      experiments/vectorized_scaling.py
 step "13. annealed importance sampling: log Z, scored exactly"     experiments/ais.py
+step "14. SGHMC: friction, closed form, and cost vs SGLD"          experiments/sghmc.py
 
 # emcee is an optional [bench] extra: the external comparison is the only thing
 # in the repo that needs it, and CI deliberately runs without it.

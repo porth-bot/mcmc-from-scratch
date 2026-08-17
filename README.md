@@ -57,6 +57,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/nuts.py`](mcmc/nuts.py) | No-U-Turn Sampler (multinomial, Betancourt 2017): recursive doubling with the generalized U-turn criterion, canonical (multinomial) state selection, gradient-cached leapfrog (one gradient per leaf), max-depth **and** per-iteration divergence handling, same dual-averaging warmup — HMC with the trajectory-length knob removed. ~4–6× the ESS per gradient of hand-tuned fixed-$L$ HMC (§9) |
 | [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction — RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
 | [`mcmc/sgld.py`](mcmc/sgld.py) | Stochastic gradient Langevin dynamics (Welling & Teh 2011): MALA with the accept step deleted and the gradient replaced by a minibatch estimate. Unadjusted, so it does **not** target $\pi$ — the point of the module is measuring how far off it is. On a Gaussian the stationary law is exactly $N(0,\ s^2/(1 - \epsilon^2/4s^2))$, a closed form the tests check at over-dispersions from 0.25% to 96%. The minibatch noise is negligible only below $\epsilon = 2/\sqrt{\mathrm{Var}[\hat g]}$, measured at $\approx 0.0045$ on the BNN posterior with batch 20 of 200 — *smaller* than a step one would actually run there |
+| [`mcmc/sghmc.py`](mcmc/sghmc.py) | **Stochastic gradient HMC** (Chen, Fox & Guestrin 2014): momentum, friction, and the noise correction that makes the two consistent. Without friction the chain has no stationary law at all — symplectic Euler preserves volume, so a noisy gradient pumps energy in forever. The stationary covariance on a Gaussian is the exact solution of a discrete Lyapunov equation, which separates the errors by order: $O(h^2)$ from the discretization, $O(h)/\gamma$ from an uncorrected minibatch noise. At matched bias and matched gradient evaluations it is 2–9× SGLD's effective samples, and its friction condition $2\gamma \ge h\hat V$ is unaffordable on the BNN posterior (§11) |
 | [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
 | [`mcmc/ais.py`](mcmc/ais.py) | **Annealed importance sampling** (Neal 2001): the normalizing constant every other sampler here throws away, since $Z$ cancels out of every accept ratio. Geometric path from a tractable $p_0$ to the target, weights accumulated along the way, $\mathbb{E}[w] = Z_T/Z_0$ **exactly** — proof in [theory](theory/derivations.md) §7, in the extended trajectory space. Reports log $Z$, the weight ESS in log space, and a jackknife correction for the $O(1/N)$ bias of log-of-a-mean (§10) |
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021 — Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
@@ -476,6 +477,112 @@ when the answer is wrong.
 
 <p align="center"><img src="figures/ais.png" width="960"></p>
 
+### 11. Momentum without an accept step: SGHMC and its friction (`experiments/sghmc.py`)
+
+[`mcmc/sgld.py`](mcmc/sgld.py) deletes MALA's accept step and pays an
+$O(\epsilon)$ bias for it, measured there against a closed form. The same
+deletion applied to *HMC* does not merely cost a bias — the chain has **no
+stationary distribution at all**. Leapfrog is volume preserving, which is
+exactly why HMC's single accept can repair a whole trajectory; feed it a noisy
+gradient and every step pumps energy in with nothing to take it out. Chen, Fox
+& Guestrin (2014) add friction, and this section measures whether that repair
+works, what it costs, and whether it is affordable on a real posterior.
+
+Because the gradient is linear on a Gaussian, the update is a 2-D Gaussian
+AR(1) in $(\theta, v)$ and the stationary covariance is the exact solution of a
+discrete Lyapunov equation — closed form, no Monte Carlo. Everything below is
+scored against that, and the tests score it in turn against the same solution
+worked out by hand, which shares no code with the solver.
+
+**The two errors separate by their order in the step, and only one of them is
+the discretization.** Writing $S = \mathrm{Var}[\theta]$, $P = \mathrm{Var}[v]$
+and $\Delta V = V - \hat V$ for the gradient-noise variance the sampler fails to
+correct for:
+
+$$\mathrm{Cov}[\theta, v] = \tfrac{h}{2} P, \qquad
+S = s^2 + \tfrac{h^2}{4} P + \frac{s^2 h \,\Delta V}{2\gamma}.$$
+
+So an uncorrected minibatch noise is an $O(h)$ error divided by the friction,
+against an $O(h^2)$ discretization error. Shrinking the step barely helps: over
+four halvings the discretization term falls 4× each time and the miscorrection
+term only 2×, and by $h = 0.0125$ the second is **300× the first**. Raising
+$\gamma$ *does* help, exactly 2× per doubling. The position–momentum correlation
+is nonzero at every step and every friction, which the target says should be
+zero — an artifact of updating $\theta$ with the new velocity, not of the noise.
+
+**Sampler against closed form, 23 cells, three arms** ($\gamma = 1$, $V = 4$,
+512 chains × 8000 draws). The table is the *closed form* for
+$\mathrm{Var}[\theta]$; every sampled cell lands within **0.17%** of its own
+prediction — not within 0.17% of the target, which is a different and much
+weaker claim:
+
+| $h$ | 0.05 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 | 0.6 |
+|---|---|---|---|---|---|---|---|
+| exact gradient | 1.0006 | 1.0026 | 1.0112 | 1.0272 | 1.0526 | 1.0909 | 1.1475 |
+| noisy, uncorrected | 1.1007 | **1.2032** | 1.4157 | 1.6435 | 1.8947 | 2.1818 | 2.5246 |
+| noisy, corrected | 1.0006 | 1.0026 | 1.0112 | 1.0272 | 1.0526 | 1.0909 | *refused* |
+
+The corrected row is the exact-gradient row *identically*: the correction is
+algebraic, not approximate, so subtracting $h^2\hat V$ from the injected
+variance restores the noise-free stationary law digit for digit. And the last
+cell is the constraint showing itself — $2\gamma \geq h \hat V$ caps the step at
+$2\gamma/\hat V = 0.5$, so the run is refused rather than quietly re-tuned.
+
+**Without friction it does not converge to anything.** At $\gamma = 0$ the
+transition matrix has determinant 1, its eigenvalues sit on the unit circle, and
+the variance grows roughly linearly in the number of steps — 1.29, 2.58, 4.78,
+9.84, 20.36 against a target variance of 1, at 1k through 16k steps. The closed
+form raises there instead of returning a number.
+
+**Momentum is worth 2–9× at matched cost, and the friction decides which.**
+Both samplers spend exactly one gradient per step, so equal cost is equal steps;
+what has to be equalized is the *bias*, and both have a closed form for it, so
+each step size is solved (not tuned) to put the stationary variance 1% above the
+truth. Effective samples per gradient, 64 chains × 20,000 draws:
+
+| | SGLD | SGHMC $\gamma{=}0.25$ | $\gamma{=}0.5$ | $\gamma{=}1$ | $\gamma{=}2$ | $\gamma{=}4$ |
+|---|---|---|---|---|---|---|
+| step | 0.1990 | 0.1965 | 0.1941 | 0.1894 | 0.1802 | 0.1633 |
+| ESS / gradient | 0.0083 | **0.0763** | 0.0709 | 0.0611 | 0.0370 | 0.0169 |
+| vs SGLD | 1.0× | **9.2×** | 8.5× | 7.4× | 4.5× | 2.0× |
+
+The measured variances (1.0002 to 1.0155) all agree with the targeted 1.0100
+within their own Monte Carlo error, which is reported beside them. The trend is
+the mechanism: less friction means the momentum is forgotten more slowly and the
+chain moves ballistically rather than diffusively, and $\gamma = 4$ is nearly
+back to Langevin.
+
+**The catch, on a real posterior.** The correction needs $\hat V$, and two
+conditions have to hold at once: $2\gamma \geq h \hat V$ for the correction to
+be defined, and $h\gamma < 2$ or the momentum recursion amplifies on its own.
+Eliminating $\gamma$ leaves a bound involving no property of the target at all,
+$h < 2/\sqrt{\hat V}$. On this repo's BNN posterior (200 points, 49 weights),
+with $\hat V$ the worst per-coordinate minibatch-gradient variance:
+
+| measured at | batch | worst $\hat V$ | max $h$ at $\gamma = 1$ | max $h$ at any $\gamma$ |
+|---|---|---|---|---|
+| prior draw | 10 | $2.1\times10^{7}$ | $9.4\times10^{-8}$ | $4.3\times10^{-4}$ |
+| prior draw | 50 | $2.9\times10^{6}$ | $6.8\times10^{-7}$ | $1.2\times10^{-3}$ |
+| MAP fit | 10 | $5.0\times10^{5}$ | $4.0\times10^{-6}$ | $2.8\times10^{-3}$ |
+| MAP fit | 50 | $9.1\times10^{4}$ | $2.2\times10^{-5}$ | $6.6\times10^{-3}$ |
+
+Measured at two points because the noise is local: a badly-fit draw has large
+residuals, and the MAP fit is 43× quieter. It does not change the conclusion.
+**The correction that makes SGHMC correct is not affordable here** — buying it
+at a usable step needs a friction so large that the discretization it is
+supposed to fix becomes unstable — which is the same shape as SGLD's own
+finding on this posterior (see the `mcmc/sgld.py` row above): the regime where
+the minibatch noise is negligible starts below a step anyone would run.
+
+<p align="center"><img src="figures/sghmc.png" width="960"></p>
+
+What is **not** measured here, and would be the next real step: the sampling
+bias of either unadjusted sampler against exact HMC *in function space* on that
+BNN posterior. The weight posterior is invariant to permuting hidden units and
+to sign flips, so a weight-space comparison is meaningless (§5 shows split-$\hat
+R$ screaming on a raw coordinate), and doing it honestly means comparing
+predictive bands, not parameters.
+
 ### Appendix: batched chains scale almost for free
 
 Every sampler advances all its chains in lockstep as one batched NumPy
@@ -550,7 +657,7 @@ One command, from a clean clone:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 14 experiments: ~5 min total
+./reproduce.sh                  # tests, then all 15 experiments: ~5 min total
 ```
 
 `requirements.txt` pins the exact versions every committed figure and table was
@@ -558,7 +665,7 @@ produced with (Python 3.12.13); `pyproject.toml` keeps lower bounds instead, so
 CI goes on testing against current releases on 3.9 and 3.12.
 
 **How exact is it?** Rerunning the whole suite in that pinned environment
-regenerates 20 of the 21 committed PNGs byte-for-byte — the samplers are seeded
+regenerates 21 of the 22 committed PNGs byte-for-byte — the samplers are seeded
 and NumPy's bit generators are stable across versions, so the chains, and
 therefore the ESS and R-hat tables, are identical. The one file that differs is
 `vectorized_scaling.png`, which plots wall-clock per step and so measures the
@@ -583,6 +690,7 @@ python rank_rhat.py             # ~1 s   (rank-normalized R-hat: heavy-tail robu
 python nuts_benchmark.py        # ~35 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
 python vectorized_scaling.py    # ~3 s   (wall-clock per step vs chain count)
 python ais.py                   # ~40 s  (annealed importance sampling: log Z against exact)
+python sghmc.py                 # ~11 s  (SGHMC vs its closed form, and vs SGLD at equal cost)
 ```
 
 (Those are measured, not estimated: the timings come from the `reproduce.sh`
