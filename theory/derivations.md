@@ -319,7 +319,9 @@ size fits all, and the trajectory traverses each coordinate at its own scale. Th
 is exactly whitening — HMC with metric $M = \Sigma^{-1}$ on $x$ equals unit-metric
 HMC on $\Sigma^{-1/2}x$. The diagonal version whitens the *marginals*; it cannot
 rotate, so it leaves correlations (and the funnel/banana curvature of 4.6–4.7)
-uncorrected — that is what NUTS with a dense metric, or Riemannian HMC, is for.
+uncorrected — that is what a dense metric (Sec. 4.10, where "cannot rotate" is
+made exact: the leftover conditioning is $\kappa(R)$, the correlation matrix's
+own), or Riemannian HMC, is for.
 
 **Estimating it.** We want $(M^{-1})_{ii} = \operatorname{Var}_\pi[x_i]$, which we
 do not know a priori, so it is learned during warmup from the sample variances.
@@ -434,6 +436,104 @@ schools NUTS gives the most ESS$(\tau)$ per gradient of the three. On the
 centered funnel it logs $\sim 13\%$ divergent iterations clustered in the neck
 and under-covers $v$ ($\mathrm{sd}\,2.7$ vs the true $3.0$); non-centering drops
 that to zero divergences and $\mathrm{sd}\,3.0$.
+
+### 4.10 The dense metric: what the diagonal cannot do, exactly
+
+Sec. 4.8 gives the diagonal metric and names its limit — it "cannot rotate" — and
+Sec. 4.9's measurements pay for that limit ($\log\tau$ gains $2.4\times$ where
+$\eta_1$ gains $15\times$). This section makes the limit quantitative and sets up
+the dense metric that lifts it.
+
+**How much conditioning a diagonal metric can remove.** Take a Gaussian target
+with covariance $\Sigma_\pi$, so $U(x) = \tfrac12 x^\top A x$ with
+$A = \Sigma_\pi^{-1}$. By Exercise 4(b), HMC with metric $M$ is identity-metric
+HMC on $y = M^{1/2}x$, whose potential has Hessian $M^{-1/2}AM^{-1/2}$ — similar
+to $M^{-1}A$, so the eigenvalues that set leapfrog's stability limit and its
+slowest direction are those of $M^{-1}A$, and the relevant conditioning is
+$\kappa(M^{-1}A)$.
+
+Write $\Sigma_\pi = SRS$ with $S = \operatorname{diag}(\sigma_i)$ and $R$ the
+correlation matrix. The diagonal metric of Sec. 4.8 is the one warmup estimates,
+$M^{-1} = \operatorname{diag}(\Sigma_\pi) = S^2$. Then
+
+$$M^{-1}A = S^2 \cdot S^{-1}R^{-1}S^{-1} = S\,R^{-1}S^{-1},$$
+
+a similarity transform of $R^{-1}$. So, reading $\kappa$ off the *eigenvalues*
+(the whitened Hessian $M^{-1/2}AM^{-1/2}$ is symmetric, and it is its eigenvalue
+ratio that sets the step size — the unsymmetric product $M^{-1}A$ has the same
+eigenvalues but *not* the same singular values, so `cond(M^-1 @ A)` is the wrong
+number and is wrong by six orders of magnitude at a scale ratio of 3000):
+
+$$\boxed{\ \kappa_{\text{diag}} = \kappa(R)\ }$$
+
+— **the diagonal metric removes exactly the scale disparity and exactly none of
+the correlation.** What is left over is the conditioning of the correlation
+matrix, which no diagonal choice can touch: $M^{1/2}$ diagonal is an axis-wise
+rescaling and $R$ is invariant under it. In two dimensions $R$ has eigenvalues
+$1\pm\rho$, so
+
+$$\kappa_{\text{diag}} = \frac{1+|\rho|}{1-|\rho|},$$
+
+$19$ at $\rho = 0.9$ and $199$ at $\rho = 0.99$, no matter how well the marginals
+are scaled. The dense choice $M^{-1} = \Sigma_\pi$ gives $M^{-1}A = I$ and
+$\kappa = 1$ exactly: one step size is optimal in every direction at once.
+
+**The kinetic energy and the momentum draw.** Nothing in Sec. 4.4's proof cares
+whether $M$ is diagonal, so the algorithm is unchanged in form:
+
+$$K(p) = \tfrac12 p^\top M^{-1}p,\qquad
+\dot x = M^{-1}p,\qquad p \sim N(0, M),$$
+
+with acceptance still $\min(1, e^{-\Delta H})$ — the drift map
+$(x,p)\mapsto(x + \varepsilon M^{-1}p,\, p)$ has Jacobian
+$\bigl(\begin{smallmatrix} I & \varepsilon M^{-1}\\ 0 & I\end{smallmatrix}\bigr)$,
+determinant 1, for dense $M^{-1}$ exactly as for diagonal.
+
+What *does* change is that the two places $M$ appears now want *different*
+matrices. The drift and the kinetic energy want $M^{-1}$, which is the object
+warmup estimates (a covariance, Sec. 4.8); the momentum draw wants a square root
+of $M$, which is the inverse of what we have. Forming $M = \Sigma^{-1}$ to
+factorize it would be both wasteful and needlessly ill-conditioned. Instead
+factor the estimate once, $\Sigma \equiv M^{-1} = LL^\top$ (Cholesky, $L$ lower
+triangular), and read all three operations off $L$:
+
+| operation | in terms of $L$ | cost |
+|---|---|---|
+| drift velocity $M^{-1}p$ | $L(L^\top p)$, or one dense mat-vec | $O(d^2)$ |
+| kinetic $\tfrac12 p^\top M^{-1}p$ | $\tfrac12\lVert L^\top p\rVert^2$ | $O(d^2)$ |
+| momentum $p \sim N(0, M)$ | $p = L^{-\top}z$, $z\sim N(0,I)$ | $O(d^2)$ |
+
+The momentum line is the one worth checking rather than believing:
+$\operatorname{Cov}(L^{-\top}z) = L^{-\top}L^{-1} = (LL^\top)^{-1} = \Sigma^{-1}
+= M$, as required — and it never forms $M$. Note the kinetic energy uses
+$L^\top p$ while the draw uses $L^{-\top}z$: a *multiply* by the factor and a
+*solve* against it, which is the usual pair and the usual place to put a sign or
+a transpose in the wrong slot. (Both are checked against a direct
+$\tfrac12 p^\top \Sigma p$ and against the empirical covariance of a large draw
+in `tests/test_metric.py`.)
+
+$L^{-1}$ is built once per metric estimate by forward substitution on the
+identity — $O(d^3/3)$, against the $O(2d^3/3)$ a general solve would spend
+re-factorizing a matrix already in triangular form (`gp-from-scratch` measured
+that exact waste at $5\times$ on its inner loop; here it is once per warmup
+window, so the point is tidiness, not speed). Per-iteration the dense metric
+costs $O(d^2)$ where the diagonal costs $O(d)$, which is free next to a gradient
+in the models here and is the reason Stan defaults to the diagonal at large $d$.
+
+**What this does *not* fix.** A single dense $M$ is one global linear
+reparameterization, so it can only whiten a target whose curvature is the same
+everywhere. Neal's funnel's curvature *depends on position* — the neck is narrow
+in $\eta$ exactly where $\log\tau$ is small — so no constant $M$ helps, and the
+prediction is that the funnel measurements of Sec. 4.6 will be unmoved by this
+change. That is Riemannian HMC's territory (a position-dependent $M(x)$, whose
+Hamiltonian is no longer separable and needs an implicit integrator), which this
+repo does not implement.
+
+Implemented in `mcmc/metric.py` (the metric algebra and its three operations,
+with the identity case reproducing the current samplers exactly); wiring it into
+`hmc.py`/`nuts.py` and estimating $\Sigma$ from warmup windows are the next
+steps, and the eight-schools re-measurement is what will say whether
+$\kappa(R)$ was the binding constraint there.
 
 ## 5. The models
 
