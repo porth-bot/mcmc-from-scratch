@@ -62,6 +62,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/ais.py`](mcmc/ais.py) | **Annealed importance sampling** (Neal 2001): the normalizing constant every other sampler here throws away, since $Z$ cancels out of every accept ratio. Geometric path from a tractable $p_0$ to the target, weights accumulated along the way, $\mathbb{E}[w] = Z_T/Z_0$ **exactly** — proof in [theory](theory/derivations.md) §7, in the extended trajectory space. Reports log $Z$, the weight ESS in log space, and a jackknife correction for the $O(1/N)$ bias of log-of-a-mean (§10) |
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021 — Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
 | [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
+| [`mcmc/tails.py`](mcmc/tails.py) | Heavy-tail rates: the generalized-CLT exponents for the sample mean and the plug-in sd, exact Student-t interval probabilities by quadrature, and the coverage/width machinery §12 scores them with |
 | [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
 | [`mcmc/bnn.py`](mcmc/bnn.py) | Bayesian neural network (1-hidden-layer tanh MLP) with hand-written backprop log-posterior gradient, sampled by HMC; plus an Adam MAP/deep-ensemble trainer sharing the same model and objective |
 
@@ -583,6 +584,105 @@ to sign flips, so a weight-space comparison is meaningless (§5 shows split-$\ha
 R$ screaming on a raw coordinate), and doing it honestly means comparing
 predictive bands, not parameters.
 
+### 12. Heavy tails: three failures, and the diagnostic that sees one (`experiments/heavy_tails.py`)
+
+[`mcmc/targets.py`](mcmc/targets.py) has shipped a Student-t since the first
+commit, described there as "the standard heavy-tail mixing cautionary target",
+and until now no result used it. The reason to run it is that "MCMC mixes badly
+in heavy tails" runs three separate things together — and this target has an
+exact sampler, so they come apart. An i.i.d. arm is a sampler with no
+autocorrelation at all: anything that goes wrong *there* is not the sampler's
+fault.
+
+Three arms (exact draws, RWM, HMC) on a 1-D Student-t at six degrees of
+freedom, and two estimands picked so that one has a central limit theorem at
+every dof and the other does not: **the mean**, whose CLT needs a finite
+variance ($\nu > 2$), and $P(|X| \le 1)$, bounded, whose CLT always holds and
+whose exact value comes from quadrature
+([`mcmc/tails.py`](mcmc/tails.py), checked against the $t_1$ and $t_3$
+antiderivatives to 1e-12).
+
+**1. The first failure is the estimand's, and no sampler can fix it.** The tail
+index of a Student-t is $\nu$, so for $1 < \nu < 2$ the sample mean still
+converges but at the generalized-CLT rate $n^{1/\nu - 1}$, and at $\nu = 1$ the
+mean of $n$ Cauchy draws is distributed exactly like one draw. Fitted exponents
+on **exact** draws, against the closed form:
+
+| $\nu$ | mean, measured | predicted | $P(\lvert X\rvert\le1)$, measured | sample sd, measured | predicted |
+|---|---|---|---|---|---|
+| 1.0 | −0.014 | 0.000 | −0.535 | +0.463 | +0.500 |
+| 1.25 | −0.213 | −0.200 | −0.523 | +0.305 | +0.300 |
+| 1.5 | −0.335 | −0.333 | −0.487 | +0.184 | +0.167 |
+| 2.5 | −0.493 | −0.500 | −0.525 | +0.024 | 0.000 |
+| 5.0 | −0.512 | −0.500 | −0.488 | +0.003 | 0.000 |
+| 30 | −0.499 | −0.500 | −0.512 | −0.000 | 0.000 |
+
+The bounded functional holds $n^{-1/2}$ at every $\nu$ including the Cauchy, so
+this is a fact about *which* quantity is being estimated and not about the
+tails as such. Note also what the error had to be summarized by: the **median**
+absolute error across replicates, because for $\nu \le 2$ the rms error is
+itself infinite. The obvious summary of the error does not exist either.
+
+**2. The second failure is not the one the folklore predicts, and measuring it
+killed this section's intended headline.** The expectation going in was that
+`mean ± 1.96 s/√n` would badly under-cover where the variance it estimates does
+not exist. It does not. Coverage is at or above nominal at *every* dof, the
+Cauchy included:
+
+| $\nu$ | coverage, n=250 | width | coverage, n=16,000 | width | width ratio |
+|---|---|---|---|---|---|
+| 1.0 | 0.977 | 2.374 | 0.980 | 2.326 | **1.02×** |
+| 1.25 | 0.976 | 0.935 | 0.968 | 0.392 | 2.39× |
+| 1.5 | 0.969 | 0.530 | 0.969 | 0.141 | 3.76× |
+| 2.5 | 0.953 | 0.232 | 0.951 | 0.032 | 7.25× |
+| 5.0 | 0.952 | 0.159 | 0.949 | 0.020 | 7.95× |
+| 30 | 0.947 | 0.128 | 0.951 | 0.016 | 8.00× |
+
+The statistic is **self-normalized** — $s$ is inflated by exactly the draws that
+inflate the numerator — and for symmetric heavy tails that ratio stays tight.
+The algebra says the same thing and is the more useful form: $s$ grows like
+$n^{1/\nu - 1/2}$, so the half-width $s/\sqrt n$ shrinks like $n^{1/\nu - 1}$,
+which is the mean's *true* error rate from the table above. The interval is
+rate-matched for free. What it loses is not honesty but information: at
+$\nu = 1$, **64× the data buys a 2% narrower interval**, against the 8.00× a
+light-tailed target delivers at the same budget. The trouble is legible in the
+width's scaling with $n$, never in the coverage — and only if you vary $n$ at
+all, which one run does not.
+
+**3. The third failure is the sampler's, it is real, and it is the only one ESS
+sees.** At $n = 4{,}000 \times 256$ chains:
+
+| $\nu$ | ESS/draw: iid | RWM | HMC | max $\lvert x\rvert$: iid | RWM | HMC |
+|---|---|---|---|---|---|---|
+| 1.0 | 1.000 | 0.002 | 0.002 | 536,365 | 228 | 496 |
+| 1.5 | 1.000 | 0.005 | 0.002 | 10,392 | 199 | 335 |
+| 5.0 | 0.998 | 0.171 | 0.463 | 39 | 17 | 39 |
+| 30 | 1.000 | 0.222 | 0.363 | 8 | 6 | 6 |
+
+A bulk-scaled proposal under-visits the tails, and the cost is steep: HMC's ESS
+per draw falls **180×** between $\nu = 30$ and the Cauchy, and the farthest
+excursion any chain makes falls three orders of magnitude short of where exact
+draws reach. That is exactly what ESS was built to detect, and it detects it.
+
+**The point of running all three together is what ESS does on the first
+failure: nothing.** The i.i.d. arm reads ESS/draw = 1.000 at every dof — it must,
+there is no autocorrelation — while its sample mean at $\nu = 1.5$ is converging
+at $n^{-1/3}$ and at $\nu = 1$ is not converging at all. ESS measures
+autocorrelation, which is one of the three things that can go wrong here, and a
+perfect ESS is consistent with an estimator that will never reach its target.
+The diagnostic that would have caught it is the one nobody plots: the interval
+width against $n$.
+
+Two smaller things worth keeping. The samplers are **slow, not wrong** — their
+error on the bounded functional is ≤ 0.004 at every dof, so inefficiency is the
+whole of the damage. And substituting ESS for $n$ in the interval makes it
+*conservative* rather than optimistic (coverage 0.996–1.000 in the low-dof MCMC
+cells), because a collapsed ESS widens the interval; the coverage column in that
+table is over 256 replicates and carries about ±0.014, so the converged coverage
+numbers are the i.i.d. ones above.
+
+![heavy tails](figures/heavy_tails.png)
+
 ### Appendix: batched chains scale almost for free
 
 Every sampler advances all its chains in lockstep as one batched NumPy
@@ -657,7 +757,7 @@ One command, from a clean clone:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 15 experiments: ~5 min total
+./reproduce.sh                  # tests, then all 16 experiments: ~6 min total
 ```
 
 `requirements.txt` pins the exact versions every committed figure and table was
@@ -665,7 +765,7 @@ produced with (Python 3.12.13); `pyproject.toml` keeps lower bounds instead, so
 CI goes on testing against current releases on 3.9 and 3.12.
 
 **How exact is it?** Rerunning the whole suite in that pinned environment
-regenerates 21 of the 22 committed PNGs byte-for-byte — the samplers are seeded
+regenerates 22 of the 23 committed PNGs byte-for-byte — the samplers are seeded
 and NumPy's bit generators are stable across versions, so the chains, and
 therefore the ESS and R-hat tables, are identical. The one file that differs is
 `vectorized_scaling.png`, which plots wall-clock per step and so measures the
@@ -691,6 +791,7 @@ python nuts_benchmark.py        # ~35 s  (NUTS vs fixed-L HMC vs RWMH: ESS per g
 python vectorized_scaling.py    # ~3 s   (wall-clock per step vs chain count)
 python ais.py                   # ~40 s  (annealed importance sampling: log Z against exact)
 python sghmc.py                 # ~11 s  (SGHMC vs its closed form, and vs SGLD at equal cost)
+python heavy_tails.py           # ~17 s  (Student-t: what breaks, and what ESS misses)
 ```
 
 (Those are measured, not estimated: the timings come from the `reproduce.sh`
@@ -741,6 +842,14 @@ state to warm up: the "log" this repo replays from is the seed plus the code.
   variance is not the local scale. What would need testing next is a metric
   estimated from *curvature* rather than from marginal spread, on a
   symmetry-broken parameterization.
+- **Heavy tails (§12, done as far as diagnosis goes):** what is *not* fixed
+  there is any of it. The section measures that a bulk-scaled proposal loses
+  180× its ESS per draw between $\nu = 30$ and a Cauchy, and stops. The
+  standard repairs — a heavier-tailed proposal, a transformation of the target
+  to light tails, or tempering the tail index — are none of them run here, and
+  the honest reason is that the section's more useful half is the failure no
+  sampler can repair (an estimand whose CLT does not exist), which a better
+  proposal would leave exactly where it is.
 
 ## References
 

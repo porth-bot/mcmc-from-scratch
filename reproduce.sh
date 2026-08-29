@@ -71,11 +71,12 @@ step "11. NUTS vs fixed-L HMC vs RWMH"                             experiments/n
 step "12. vectorized-chains scaling appendix"                      experiments/vectorized_scaling.py
 step "13. annealed importance sampling: log Z, scored exactly"     experiments/ais.py
 step "14. SGHMC: friction, closed form, and cost vs SGLD"          experiments/sghmc.py
+step "15. heavy tails: the estimand, the interval, and the sampler" experiments/heavy_tails.py
 
 # emcee is an optional [bench] extra: the external comparison is the only thing
 # in the repo that needs it, and CI deliberately runs without it.
 if "$PY" -c "import emcee" >/dev/null 2>&1; then
-    step "14. external benchmark vs emcee" experiments/external_benchmark.py
+    step "16. external benchmark vs emcee" experiments/external_benchmark.py
 else
     echo
     echo ">>> SKIPPED: external benchmark vs emcee (emcee not installed)"
