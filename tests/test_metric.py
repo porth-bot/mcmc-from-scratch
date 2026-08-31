@@ -106,16 +106,28 @@ def test_a_dense_identity_metric_reproduces_the_identity_metric_exactly():
 
 
 def test_diagonal_metric_agrees_with_the_inline_arithmetic_the_samplers_use():
-    """hmc.py computes the same two quantities as `inv_mass * p` and
-    `sum(inv_mass * p**2) / 2`; the object must not change them."""
+    """hmc.py computed these three quantities inline as `inv_mass * p`,
+    `(eps * inv_mass) * p` and `sum(inv_mass * p**2) / 2` before this module
+    existed, and the object must reproduce them *exactly* -- association
+    included. A different-but-equivalent association is a one-ulp change, and
+    an HMC chain is chaotic enough to turn that into a different chain (see
+    tests/test_hmc.py), so every measurement already committed under the
+    diagonal metric depends on these being equalities and not tolerances."""
     rng = np.random.default_rng(4)
     v = np.exp(rng.standard_normal(5))
     p = rng.standard_normal((3, 5))
     m = DiagonalMetric(v)
     assert np.array_equal(m.velocity(p), v * p)
-    assert np.array_equal(m.kinetic(p), 0.5 * np.sum(v * p * p, axis=-1))
-    # a dense metric holding the same diagonal agrees to roundoff
-    assert np.allclose(DenseMetric(np.diag(v)).kinetic(p), m.kinetic(p))
+    assert np.array_equal(m.scaled_velocity(p, 0.3), (0.3 * v) * p)
+    assert np.array_equal(m.kinetic(p), 0.5 * np.sum(v * p**2, axis=-1))
+    # a dense metric holding the same diagonal agrees to roundoff, not exactly:
+    # (eps * v) * p against eps * (p @ diag(v)) is the same real number
+    # reassociated, and `sum((p @ diag(sqrt v))**2)` against `sum(v * p**2)`
+    # likewise.
+    dense = DenseMetric(np.diag(v))
+    assert np.allclose(dense.kinetic(p), m.kinetic(p), rtol=1e-14, atol=0)
+    assert np.allclose(dense.scaled_velocity(p, 0.3),
+                       m.scaled_velocity(p, 0.3), rtol=1e-14, atol=0)
 
 
 # -- what the metric is for --------------------------------------------------

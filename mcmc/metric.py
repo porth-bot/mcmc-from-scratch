@@ -34,7 +34,16 @@ instead of branching on ``None``, and it is deliberately *arithmetic-free*: it
 returns the arrays it is handed. A dense metric built from the identity matrix
 also reproduces it bit for bit (multiplying by an exact-float identity is
 exact), which is the check that a metric option cannot silently change results
-that were computed without one.
+that were computed without one. That exactness does *not* extend to
+``DenseMetric(diag(v))`` against ``DiagonalMetric(v)``: the same real numbers
+are associated differently, which is a one-ulp difference per operation and an
+unbounded one per chain, since an accept comparison eventually lands on the
+other side of its uniform draw. The two agree to 1e-14 along a trajectory and
+are different chains; ``tests/test_hmc.py`` says so in those terms.
+
+``mcmc/nuts.py`` still carries its own inline diagonal arithmetic -- only
+``hmc.py`` goes through this module so far, so a dense metric is an HMC option
+and not yet a NUTS one.
 """
 
 from __future__ import annotations
@@ -87,6 +96,22 @@ class Metric(ABC):
         """``M^-1 p`` -- the drift direction, and NUTS's U-turn vector."""
 
     @abstractmethod
+    def scaled_velocity(self, p: np.ndarray, step_size: float) -> np.ndarray:
+        """``eps M^-1 p`` -- one leapfrog drift, as a single call.
+
+        This exists rather than ``step_size * velocity(p)`` because the
+        samplers computed the drift inline before this module existed, and
+        floating-point multiplication does not associate: ``(eps * v) * p``
+        and ``eps * (v * p)`` differ in the last bit, a leapfrog trajectory is
+        chaotic, and a one-ulp change would move every measurement already
+        committed under the diagonal metric. Each implementation keeps the
+        association the inline code used, so moving to a metric object changes
+        no result: the operations are asserted equal (not close) against the
+        inline forms in ``tests/test_metric.py``, and a whole adapted-diagonal
+        run was checked digest-for-digest against the pre-refactor code.
+        """
+
+    @abstractmethod
     def kinetic(self, p: np.ndarray) -> np.ndarray:
         """``p^T M^-1 p / 2``, reduced over the last axis."""
 
@@ -107,6 +132,9 @@ class IdentityMetric(Metric):
 
     def velocity(self, p: np.ndarray) -> np.ndarray:
         return p
+
+    def scaled_velocity(self, p: np.ndarray, step_size: float) -> np.ndarray:
+        return step_size * p
 
     def kinetic(self, p: np.ndarray) -> np.ndarray:
         return 0.5 * np.sum(p * p, axis=-1)
@@ -139,8 +167,11 @@ class DiagonalMetric(Metric):
     def velocity(self, p: np.ndarray) -> np.ndarray:
         return self.variance * p
 
+    def scaled_velocity(self, p: np.ndarray, step_size: float) -> np.ndarray:
+        return (step_size * self.variance) * p
+
     def kinetic(self, p: np.ndarray) -> np.ndarray:
-        return 0.5 * np.sum(self.variance * p * p, axis=-1)
+        return 0.5 * np.sum(self.variance * p**2, axis=-1)
 
     def draw_momentum(self, rng, shape):
         return self._momentum_sd * rng.standard_normal((*shape, self.dim))
@@ -181,6 +212,9 @@ class DenseMetric(Metric):
     def velocity(self, p: np.ndarray) -> np.ndarray:
         # Sigma is symmetric, so (Sigma p)_i for a batch of row vectors is p @ Sigma.
         return p @ self.cov
+
+    def scaled_velocity(self, p: np.ndarray, step_size: float) -> np.ndarray:
+        return step_size * (p @ self.cov)
 
     def kinetic(self, p: np.ndarray) -> np.ndarray:
         # (L^T p)_j = sum_k p_k L_kj = (p @ L)_j
