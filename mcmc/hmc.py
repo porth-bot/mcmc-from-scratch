@@ -31,6 +31,14 @@ probability to ``target_accept``. A *diagonal mass matrix* can additionally be
 adapted from windowed warmup variances (Sec. 4.8 of theory/derivations.md):
 this rescales each coordinate so a single step size fits axis-aligned targets
 of unequal scale, which is the common cheap win before reaching for NUTS.
+
+A *dense* metric can be supplied instead (``metric=``, Sec. 4.10). It is the
+only one of the three that can rotate: a diagonal metric removes exactly the
+scale disparity and exactly none of the correlation, leaving the conditioning
+of the correlation matrix itself, which is 199 at rho = 0.99 however well the
+marginals are scaled. Estimating one from warmup is not implemented here yet --
+``adapt_mass`` still estimates a diagonal -- so a dense metric is something a
+caller passes in, and passing both is an error rather than a silent overwrite.
 """
 
 from __future__ import annotations
@@ -40,6 +48,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .base import SamplerResult
+from .metric import DenseMetric, DiagonalMetric, Metric, metric_from
 
 DIVERGENCE_DELTA_H = 25.0  # exp(-25) ~ 1e-11: trajectory left the typical set
 
@@ -50,7 +59,7 @@ def leapfrog(
     p: np.ndarray,
     step_size: float,
     n_steps: int,
-    inv_mass: np.ndarray | None = None,
+    metric: Metric | np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Integrate Hamilton's equations with the leapfrog (Stormer-Verlet) scheme.
 
@@ -64,11 +73,19 @@ def leapfrog(
         p_{k+3/2} = p_{k+1/2} + eps grad log pi(x_{k+1})(kick)
         ... final half kick to resynchronize p with x.
 
-    ``inv_mass`` is the *diagonal* of M^{-1}, shape (dim,); None means M = I and
-    the drift is the plain x += eps p. Only the drift changes -- the kicks are
-    gradient steps in position space and never see the metric. Rescaling p by a
-    diagonal is still a shear composition, so symplecticity and reversibility
-    (hence the accept step's validity) are untouched.
+    ``metric`` is the mass matrix, as a ``mcmc.metric.Metric`` or as the array
+    one would be built from: None means M = I and the drift is the plain
+    x += eps p, a 1-D array is the diagonal of M^{-1}, and a 2-D array is a
+    full M^{-1} (Sec. 4.10). Only the drift changes -- the kicks are gradient
+    steps in position space and never see the metric -- and the drift map
+    (x, p) -> (x + eps M^{-1} p, p) is a shear for *any* M^{-1}, upper
+    triangular with a unit diagonal, so symplecticity and reversibility (hence
+    the accept step's validity) are untouched by a dense metric exactly as
+    they are by a diagonal one.
+
+    Pass a ``Metric`` rather than a matrix inside a loop: building one from a
+    (dim, dim) array factorizes it, which is O(d^3) and belongs once per metric
+    estimate, not once per trajectory.
 
     Symmetric composition => second-order accurate and reversible:
     running n_steps from (x', -p') returns exactly to (x, -p) up to
@@ -78,12 +95,12 @@ def leapfrog(
     # then NaN positions. That IS the divergence signal: the NaN propagates to
     # a -inf acceptance ratio and the proposal is rejected (hmc() below), so
     # only the arithmetic warning is silenced here, not the failure.
-    drift = step_size if inv_mass is None else step_size * inv_mass
+    m = metric if isinstance(metric, Metric) else metric_from(metric, dim=x.shape[-1])
     with np.errstate(over="ignore", invalid="ignore"):
         x = x.copy()
         p = p + 0.5 * step_size * grad_logpdf(x)
         for k in range(n_steps):
-            x = x + drift * p
+            x = x + m.scaled_velocity(p, step_size)
             if k < n_steps - 1:
                 p = p + step_size * grad_logpdf(x)
         p = p + 0.5 * step_size * grad_logpdf(x)
@@ -126,6 +143,22 @@ def _mass_adaptation_schedule(n_warmup: int) -> tuple[int, int, list[int]]:
     return init_buffer, term_buffer, ends
 
 
+def _reported_inv_mass(metric: Metric, dim: int) -> np.ndarray:
+    """What ``extras["inv_mass"]`` holds, now that a metric can be dense.
+
+    A diagonal or identity metric reports the (dim,) vector callers have always
+    read (``experiments/mass_matrix.py``, ``experiments/bnn.py``). A dense
+    metric reports the whole (dim, dim) M^-1 instead of its diagonal, because
+    the diagonal of a dense metric is *not* the metric that was used and a
+    caller that plotted it would be plotting something the sampler never ran.
+    """
+    if isinstance(metric, DenseMetric):
+        return metric.cov
+    if isinstance(metric, DiagonalMetric):
+        return metric.variance
+    return np.ones(dim)
+
+
 def hmc(
     target: Any,
     x0: np.ndarray,
@@ -138,6 +171,7 @@ def hmc(
     adapt_mass: bool = False,
     target_accept: float = 0.8,
     jitter: float = 0.2,
+    metric: Metric | np.ndarray | None = None,
 ) -> SamplerResult:
     """Run batched HMC chains, optionally with an adapted diagonal mass matrix.
 
@@ -164,6 +198,16 @@ def hmc(
         ``adapt_step_size`` (the step size is re-tuned to each new metric).
         The metric is frozen at the end of warmup -- adapting during sampling
         would break invariance, exactly as for the step size.
+    metric : Metric | ndarray, optional
+        A *fixed* mass matrix, held for the whole run: a 1-D array is the
+        diagonal of M^-1 (Sec. 4.8), a 2-D array is a full M^-1 (Sec. 4.10),
+        and None is the identity. A dense metric costs O(d^2) per leapfrog step
+        against the diagonal's O(d) and buys the rotation the diagonal cannot
+        do: for a Gaussian, M^-1 = Sigma conditions the whitened Hessian to
+        exactly 1 where the best diagonal leaves kappa(R), the correlation
+        matrix's own. Mutually exclusive with ``adapt_mass``, which estimates
+        its own (diagonal) metric during warmup -- passing both would silently
+        discard whichever the other overwrote.
     target_accept : float
         Dual-averaging target for the mean acceptance probability. 0.8 is a
         good default; the cost-optimal value for well-behaved targets is
@@ -172,8 +216,10 @@ def hmc(
     Returns
     -------
     SamplerResult; ``extras`` holds per-iteration energy errors ``delta_H``
-    (n_chains, n_samples), the final ``step_size``, the diagonal ``inv_mass``
-    (= diag(M^{-1}), all ones when ``adapt_mass`` is off), ``n_divergent``, and
+    (n_chains, n_samples), the final ``step_size``, ``inv_mass`` (the (dim,)
+    diagonal of M^{-1} for an identity or diagonal metric -- all ones when
+    ``adapt_mass`` is off and no metric was given -- or the full (dim, dim)
+    M^{-1} for a dense one), the ``metric`` object itself, ``n_divergent``, and
     ``n_grad_evals`` for compute-normalized efficiency comparisons.
 
     Examples
@@ -204,8 +250,19 @@ def hmc(
     n_divergent = 0
     n_grad_evals = 0
 
-    inv_mass = np.ones(dim)          # diag(M^{-1}); identity metric by default
-    sqrt_mass = np.ones(dim)         # sd of the momentum draw, = sqrt(diag(M)) = 1/sqrt(inv_mass)
+    if metric is not None and adapt_mass:
+        raise ValueError(
+            "pass a fixed `metric` or set `adapt_mass`, not both: adaptation "
+            "estimates its own diagonal metric from warmup and would overwrite "
+            "the one supplied here"
+        )
+    metric_obj: Metric = (
+        metric if isinstance(metric, Metric) else metric_from(metric, dim=dim)
+    )
+    if metric_obj.dim != dim:
+        raise ValueError(
+            f"metric is {metric_obj.dim}-dimensional but x0 has dim {dim}"
+        )
 
     # dual-averaging state (Hoffman & Gelman 2014, Alg. 5). Reset at each mass
     # window boundary so the step size re-tunes to the fresh metric.
@@ -232,19 +289,21 @@ def hmc(
     L_low = max(1, int(np.ceil((1.0 - jitter) * n_leapfrog)))
 
     for it in range(n_warmup + n_samples):
-        p0 = rng.standard_normal((n_chains, dim)) * sqrt_mass  # p ~ N(0, M)
+        p0 = metric_obj.draw_momentum(rng, (n_chains,))        # p ~ N(0, M)
         L = int(rng.integers(L_low, n_leapfrog + 1))
-        x_prop, p_prop = leapfrog(target.grad_logpdf, x, p0, eps, L, inv_mass)
+        x_prop, p_prop = leapfrog(target.grad_logpdf, x, p0, eps, L, metric_obj)
         n_grad_evals += (L + 1) * n_chains
         lp_prop = np.asarray(target.logpdf(x_prop), dtype=float)
 
         # -Delta H = [log pi(x') - K(p')] - [log pi(x) - K(p)],
-        # K(p) = p^T M^{-1} p / 2 = sum inv_mass * p^2 / 2.
+        # K(p) = p^T M^{-1} p / 2, computed by the metric (diagonal: the same
+        # sum inv_mass * p^2 / 2 this line used to spell out; dense:
+        # ||L^T p||^2 / 2, never forming M^{-1} p).
         # Diverged trajectories carry inf/NaN through here by design; they
         # are mapped to -inf below and rejected.
         with np.errstate(over="ignore", invalid="ignore"):
-            neg_dH = (lp_prop - 0.5 * np.sum(inv_mass * p_prop**2, axis=1)) - (
-                lp - 0.5 * np.sum(inv_mass * p0**2, axis=1)
+            neg_dH = (lp_prop - metric_obj.kinetic(p_prop)) - (
+                lp - metric_obj.kinetic(p0)
             )
         neg_dH = np.where(np.isnan(neg_dH), -np.inf, neg_dH)
         accept = np.log(rng.uniform(size=n_chains)) < neg_dH
@@ -274,8 +333,7 @@ def hmc(
                 # Stan's regularization toward a unit metric when the window is
                 # small, so a short/degenerate window can't produce a wild scale.
                 var = (acc_n / (acc_n + 5.0)) * var + 1e-3 * (5.0 / (acc_n + 5.0))
-                inv_mass = np.maximum(var, 1e-12)
-                sqrt_mass = 1.0 / np.sqrt(inv_mass)
+                metric_obj = DiagonalMetric(np.maximum(var, 1e-12))
                 acc_n, acc_sum, acc_sumsq = 0, np.zeros(dim), np.zeros(dim)
                 if adapt_step_size:
                     mu, h_bar, log_eps_bar = reset_dual_averaging(eps)
@@ -296,7 +354,8 @@ def hmc(
         extras={
             "delta_H": delta_H,
             "step_size": eps,
-            "inv_mass": inv_mass,
+            "inv_mass": _reported_inv_mass(metric_obj, dim),
+            "metric": metric_obj,
             "n_divergent": n_divergent,
             "n_grad_evals": n_grad_evals,
         },
