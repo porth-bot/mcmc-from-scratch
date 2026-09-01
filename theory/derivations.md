@@ -530,10 +530,156 @@ Hamiltonian is no longer separable and needs an implicit integrator), which this
 repo does not implement.
 
 Implemented in `mcmc/metric.py` (the metric algebra and its three operations,
-with the identity case reproducing the current samplers exactly); wiring it into
-`hmc.py`/`nuts.py` and estimating $\Sigma$ from warmup windows are the next
-steps, and the eight-schools re-measurement is what will say whether
-$\kappa(R)$ was the binding constraint there.
+with the identity case reproducing the current samplers exactly) and wired into
+`hmc.py`. Estimating $\Sigma$ from warmup windows is Sec. 4.11 below; `nuts.py`
+still carries its own inline diagonal arithmetic and does not take a dense
+metric yet.
+
+### 4.11 Estimating the dense metric: the shrinkage, and the loss it is tuned for
+
+Sec. 4.10 is about a metric we are *handed*: $M^{-1} = \Sigma_\pi$ gives
+$\kappa = 1$, the best diagonal leaves $\kappa(R)$. Warmup is handed nothing. It
+sees a window of $n$ draws and has to produce $\hat\Sigma$, and the gap between
+$\Sigma_\pi$ and $\hat\Sigma$ is where a dense metric can give back everything
+the algebra won.
+
+**Why the diagonal recipe does not generalize.** Sec. 4.8 estimates $d$
+variances from a window of $n$ pooled draws and shrinks them toward a unit
+metric with weight $5/(n+5)$ — under a percent for any window the schedule
+closes, so that "regularization" is a guard against a degenerate window, not a
+correction. The dense case estimates $d(d+1)/2$ numbers from the *same* window.
+The sample covariance of $n$ centered draws has rank at most $n-1$, so for
+$n \le d$ it is singular; and even at $n$ a few multiples of $d$ its extreme
+eigenvalues are biased outward (Marchenko–Pastur: at $n/d = 4$ the sample
+spectrum of a *white* population already spans $[0.25, 2.25]$, a spread of $9$
+where the truth is $1$).
+
+Singular is worse than it sounds, because it does not reliably announce itself.
+The Cholesky in `DenseMetric` sees a zero eigenvalue plus roundoff, and the sign
+of that roundoff decides what happens. In the case pinned down in
+`tests/test_adapt.py` — $n = d = 12$ — the smallest eigenvalue lands at
+$+2\times10^{-16}$, the factorization succeeds, and the sampler runs with a
+metric of condition number $2\times10^{16}$. One draw fewer and the same
+eigenvalue is negative and it raises. The positive-definiteness check is a
+backstop, not a defense: the reason to regularize is that the unregularized
+failure is sometimes *silent*.
+
+**Ledoit–Wolf shrinkage.** Shrink $S$ toward the sphere. Work in the
+dimension-normalized inner product $\langle A,B\rangle = \operatorname{tr}(AB^\top)/d$,
+with $\lVert A\rVert^2 = \langle A,A\rangle$, and consider
+
+$$\hat\Sigma_\alpha = \alpha\,\mu I + (1-\alpha)\,S, \qquad \mu = \langle \Sigma, I\rangle
+= \tfrac{1}{d}\operatorname{tr}\Sigma .$$
+
+$\hat\Sigma_\alpha - \Sigma = \alpha(\mu I - \Sigma) + (1-\alpha)(S - \Sigma)$, and
+$\mathbb{E}[S] = \Sigma$ makes the cross term vanish in expectation, so
+
+$$\mathbb{E}\lVert\hat\Sigma_\alpha - \Sigma\rVert^2
+= \alpha^2\underbrace{\lVert\mu I - \Sigma\rVert^2}_{\textstyle a^2}
++ (1-\alpha)^2\underbrace{\mathbb{E}\lVert S - \Sigma\rVert^2}_{\textstyle b^2}.$$
+
+A quadratic in $\alpha$: differentiate, set to zero,
+
+$$\boxed{\ \alpha^\star = \frac{b^2}{a^2+b^2} = \frac{b^2}{\delta^2},\qquad
+\delta^2 \equiv \mathbb{E}\lVert S - \mu I\rVert^2 = a^2 + b^2\ }$$
+
+(the last identity is the same cross-term cancellation applied to
+$S - \mu I = (S-\Sigma) + (\Sigma - \mu I)$), with minimum value
+$a^2b^2/\delta^2$ — strictly below $b^2$, the sample covariance's own error,
+whenever $a^2$ is finite. **Shrinking always helps in this loss**; how much
+depends on how spherical $\Sigma$ already is.
+
+None of $\mu, a^2, b^2$ is known, so estimate all three from the window
+(Ledoit & Wolf 2004): $m = \langle S, I\rangle$,
+$d^2 = \lVert S - mI\rVert^2$,
+$\bar b^2 = \frac{1}{n^2}\sum_k \lVert x_kx_k^\top - S\rVert^2$,
+$b^2 = \min(\bar b^2, d^2)$, and $\hat\alpha = b^2/d^2$. The cap matters:
+$\bar b^2 > d^2$ is a small-sample artifact and without it $\hat\alpha$ could
+exceed $1$ and push the estimate out of the PSD cone. The fourth-moment term is
+computed from
+
+$$\sum_k \lVert x_kx_k^\top - S\rVert_F^2 = \sum_k \lVert x_k\rVert^4 - n\lVert S\rVert_F^2,$$
+
+which follows by expanding the square and using $\sum_k x_kx_k^\top = nS$ with
+$\operatorname{tr}(SS) = \lVert S\rVert_F^2$ — one pass, no $(d,d)$ temporary
+per draw.
+
+**The loss a sampler pays is not that loss.** $\alpha^\star$ minimizes expected
+squared Frobenius error. HMC does not care about squared error; by Sec. 4.10 it
+cares about $\kappa(\hat\Sigma\,\Sigma_\pi^{-1})$, the whitened Hessian's
+eigenvalue *ratio*. These are different objectives and they rank the estimators
+differently — not subtly, but by sixteen orders of magnitude. Measured on an
+AR(1) Gaussian, $\rho = 0.95$, $d = 10$
+(`experiments/dense_metric_estimation.py`, medians over 40 windows;
+$\kappa(R) = 324$ is the best any diagonal can do, $\kappa = 1$ the exact dense):
+
+| $n/d$ | | sample $S$ | Stan ridge | Ledoit–Wolf |
+|---|---|---|---|---|
+| 0.5 | rel. Frobenius err | **0.56** | 0.63 | 0.71 |
+|     | $\kappa$ | $\infty$ | $1.1\times10^3$ | **35** |
+| 1 | rel. Frobenius err | **0.43** | 0.48 | 0.54 |
+|   | $\kappa$ | $5\times10^{15}$ | 359 | **18** |
+| 2 | rel. Frobenius err | **0.31** | 0.37 | 0.42 |
+|   | $\kappa$ | 19.7 | 19.1 | **9.8** |
+| 20 | rel. Frobenius err | **0.101** | 0.105 | 0.109 |
+|    | $\kappa$ | 2.18 | 2.18 | **2.16** |
+
+**The raw sample covariance is the best of the three in Frobenius error at
+every window size and the worst by any distance as a metric.** At $n \le d$ it
+is a matrix with zero eigenvalues; truncating the small directions to zero is a
+*good* way to be close in squared error and a catastrophic way to build a
+metric, since $\kappa$ divides by the smallest eigenvalue. This is the reason
+the two columns exist in the table separately, and it is worth stating as a
+rule: an estimator chosen for a sum-of-squares loss is under no obligation to
+be good in a ratio-of-eigenvalues loss.
+
+At $n/d \gtrsim 20$ all three agree to within a couple of percent, which is why
+`dense_shrinkage="stan"` is the default — it is the choice that does not change
+a well-sampled window — and Ledoit–Wolf is what to reach for when the window is
+short relative to $d$, where it is better by a factor of $20$ and up.
+
+**Estimation cost against algebraic gain.** Fix the window at $400$ draws and
+grow $d$. The dense metric's achieved $\kappa$ degrades — $1.28$ at $d = 2$ to
+$7.2$ at $d = 128$, where $n/d = 3.1$ — but $\kappa(R)$ grows faster, from $39$
+to $1337$, so the *gain* over the best possible diagonal rises to $\approx 276$
+at $d = 32$ and is still $186$ at $d = 128$. On this family the crossover is
+not reached in that range: a fixed warmup budget degrades the dense estimate
+more slowly than correlation degrades the diagonal. The reason to prefer a
+diagonal metric at large $d$ is the $O(d^2)$ per-step cost and the $O(d^2)$
+storage, not the estimate falling apart.
+
+**A trap in the end-to-end measurement.** Comparing metrics at a *shared*
+trajectory length $L$ understates the dense metric by an order of magnitude,
+and the mechanism is Sec. 4.8's own. The optimal $L$ tracks the slowest
+direction's period, which scales like $\sqrt{\kappa}$; whitening collapses
+every period to one, so a whitened chain decorrelates in a couple of steps and
+a shared $L$ charges it for gradients it does not need. Same target as above,
+ESS per $1000$ gradients, warmup charged, each metric swept over
+$L \in \{1,2,5,10,25,50\}$:
+
+| metric | achieved $\kappa$ | best $L$ | ESS/kgrad at best $L$ | at $L = 25$ |
+|---|---|---|---|---|
+| identity | 324 | 25 | 16.8 | 16.8 |
+| diagonal | 322 | 25 | 15.5 | 15.5 |
+| dense (Stan ridge) | 1.36 | 2 | **165.0** | 18.5 |
+| dense (Ledoit–Wolf) | 1.37 | 2 | 162.9 | 18.3 |
+
+$9.8\times$ over the identity metric when each gets the $L$ it wants; $1.1\times$
+at a shared $L = 25$. The $L$ ratio predicted by $\sqrt{\kappa}$ is
+$\sqrt{324/1.36} \approx 15$; the measured one is $25/2 \approx 12$, close
+enough on a grid this coarse to say the mechanism is the one named.
+
+The diagonal metric coming in *below* the identity is not noise about zero: the
+target's marginals are all unit variance, so there is no scale disparity for a
+diagonal to remove, and what is left is warmup spent estimating a metric that
+does nothing. That is Sec. 4.10's claim in its least flattering form — a
+diagonal metric removes exactly the scale disparity and exactly none of the
+correlation, and when there is no scale disparity it removes nothing.
+
+What remains is to spend this on the posterior that motivated it: eight
+schools, where Sec. 4.9 measured $14.8\times$ on $\eta_1$ against $2.4\times$
+on $\log\tau$ with a diagonal metric, and where the open question is whether
+$\kappa(R)$ was the binding constraint.
 
 ## 5. The models
 
@@ -1149,3 +1295,5 @@ against.
 - Roberts, Gelman & Gilks (1997), *Ann. Appl. Probab.* 7 (0.234 optimal scaling).
 - Rubin (1981), "Estimation in parallel randomized experiments", *J. Educ. Statist.* 6 (eight schools data).
 - Betancourt (2017), "A conceptual introduction to HMC", arXiv:1701.02434 (typical sets, divergences).
+- Ledoit & Wolf (2004), "A well-conditioned estimator for large-dimensional covariance matrices", *J. Multivar. Anal.* 88 (Sec. 4.11 shrinkage).
+- Marchenko & Pastur (1967), *Mat. Sb.* 72 (the sample-spectrum spread quoted in Sec. 4.11).
