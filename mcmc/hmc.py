@@ -32,13 +32,16 @@ adapted from windowed warmup variances (Sec. 4.8 of theory/derivations.md):
 this rescales each coordinate so a single step size fits axis-aligned targets
 of unequal scale, which is the common cheap win before reaching for NUTS.
 
-A *dense* metric can be supplied instead (``metric=``, Sec. 4.10). It is the
-only one of the three that can rotate: a diagonal metric removes exactly the
-scale disparity and exactly none of the correlation, leaving the conditioning
-of the correlation matrix itself, which is 199 at rho = 0.99 however well the
-marginals are scaled. Estimating one from warmup is not implemented here yet --
-``adapt_mass`` still estimates a diagonal -- so a dense metric is something a
-caller passes in, and passing both is an error rather than a silent overwrite.
+A *dense* metric is the only one of the three that can rotate: a diagonal
+metric removes exactly the scale disparity and exactly none of the correlation,
+leaving the conditioning of the correlation matrix itself, which is 199 at
+rho = 0.99 however well the marginals are scaled. It can be supplied fixed
+(``metric=``, Sec. 4.10) or estimated from warmup like the diagonal one
+(``adapt_mass="dense"``, Sec. 4.11) -- the same memoryless windows, with the
+sample *covariance* in place of the sample variances and a shrinkage that has
+real work to do, since a window of n draws in d dimensions gives a covariance
+of rank at most n - 1. Supplying a fixed metric *and* asking for adaptation is
+an error rather than a silent overwrite.
 """
 
 from __future__ import annotations
@@ -47,6 +50,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from .adapt import WindowMoments, estimate_covariance, stan_shrink
 from .base import SamplerResult
 from .metric import DenseMetric, DiagonalMetric, Metric, metric_from
 
@@ -168,12 +172,13 @@ def hmc(
     rng: np.random.Generator,
     n_warmup: int = 0,
     adapt_step_size: bool = False,
-    adapt_mass: bool = False,
+    adapt_mass: bool | str = False,
     target_accept: float = 0.8,
     jitter: float = 0.2,
     metric: Metric | np.ndarray | None = None,
+    dense_shrinkage: str = "stan",
 ) -> SamplerResult:
-    """Run batched HMC chains, optionally with an adapted diagonal mass matrix.
+    """Run batched HMC chains, optionally with a mass matrix adapted in warmup.
 
     Parameters
     ----------
@@ -188,16 +193,35 @@ def hmc(
         near-Gaussian targets can resonate (trajectories that U-turn back to
         the start), and jitter breaks the periodicity cheaply. NUTS replaces
         this heuristic with an automatic U-turn criterion.
-    adapt_mass : bool
-        If True (and ``n_warmup`` is long enough), estimate a *diagonal* mass
-        matrix M from windowed warmup variances: M^{-1} = diag of the per-
-        coordinate variances (Sec. 4.8). With that metric the momentum is
-        drawn p ~ N(0, M) and the kinetic energy is K = p^T M^{-1} p / 2, so
-        each axis is preconditioned to unit scale and one step size fits an
-        axis-aligned target of unequal scales. Best paired with
-        ``adapt_step_size`` (the step size is re-tuned to each new metric).
-        The metric is frozen at the end of warmup -- adapting during sampling
-        would break invariance, exactly as for the step size.
+    adapt_mass : bool | {"diag", "dense"}
+        Estimate a mass matrix from windowed warmup draws (and leave it at the
+        identity if ``n_warmup`` is too short for a window to close). With the
+        estimated metric the momentum is drawn p ~ N(0, M) and the kinetic
+        energy is K = p^T M^{-1} p / 2. Best paired with ``adapt_step_size``
+        (the step size is re-tuned to each new metric). The metric is frozen at
+        the end of warmup -- adapting during sampling would break invariance,
+        exactly as for the step size.
+
+        ``True`` and ``"diag"`` are the same thing, the Sec. 4.8 metric:
+        M^{-1} = diag of the per-coordinate window variances, which
+        preconditions each axis to unit scale so one step size fits an
+        axis-aligned target of unequal scales, and rotates nothing.
+
+        ``"dense"`` estimates the full window covariance instead (Sec. 4.11),
+        M^{-1} = Sigma_hat, the only metric of the three that can remove
+        correlation. It costs O(d^2) per leapfrog step against the diagonal's
+        O(d), needs O(d^2) numbers estimated from the same window that gave the
+        diagonal d of them, and is therefore the choice for a strongly
+        correlated target in modest dimension rather than a free upgrade -- the
+        crossover is measured in ``experiments/dense_metric_estimation.py``.
+    dense_shrinkage : {"stan", "ledoit-wolf"}
+        How the window covariance is regularized when ``adapt_mass="dense"``;
+        ignored otherwise. ``"stan"`` is the ridge the diagonal path already
+        uses, generalized (a singularity guard, essentially neutral for a
+        window worth using); ``"ledoit-wolf"`` estimates the Frobenius-optimal
+        shrinkage toward a scaled identity. See ``mcmc/adapt.py`` and Sec. 4.11
+        -- and note that Frobenius-optimal is not the sampler's loss, which is
+        why the default is the neutral one.
     metric : Metric | ndarray, optional
         A *fixed* mass matrix, held for the whole run: a 1-D array is the
         diagonal of M^-1 (Sec. 4.8), a 2-D array is a full M^-1 (Sec. 4.10),
@@ -250,11 +274,17 @@ def hmc(
     n_divergent = 0
     n_grad_evals = 0
 
+    if adapt_mass is True:
+        adapt_mass = "diag"
+    if adapt_mass not in (False, "diag", "dense"):
+        raise ValueError(
+            f"adapt_mass must be False, 'diag' or 'dense', got {adapt_mass!r}"
+        )
     if metric is not None and adapt_mass:
         raise ValueError(
             "pass a fixed `metric` or set `adapt_mass`, not both: adaptation "
-            "estimates its own diagonal metric from warmup and would overwrite "
-            "the one supplied here"
+            "estimates its own metric from warmup and would overwrite the one "
+            "supplied here"
         )
     metric_obj: Metric = (
         metric if isinstance(metric, Metric) else metric_from(metric, dim=dim)
@@ -281,10 +311,8 @@ def hmc(
     )
     window_end_set = set(window_ends)
     last_window_end = window_ends[-1] if window_ends else 0
-    # Welford-free running moments over the current window (pooled across chains)
-    acc_n = 0
-    acc_sum = np.zeros(dim)
-    acc_sumsq = np.zeros(dim)
+    # window-scoped moments, pooled across chains (mcmc/adapt.py)
+    moments = WindowMoments(dim, mode=adapt_mass or "diag")
 
     L_low = max(1, int(np.ceil((1.0 - jitter) * n_leapfrog)))
 
@@ -323,18 +351,21 @@ def hmc(
 
             # accumulate window moments during the metric-adaptation region
             if adapt_mass and init_buffer <= it < last_window_end:
-                acc_n += n_chains
-                acc_sum += x.sum(axis=0)
-                acc_sumsq += np.sum(x * x, axis=0)
+                moments.add(x)
 
             if adapt_mass and (it + 1) in window_end_set:
-                mean = acc_sum / acc_n
-                var = acc_sumsq / acc_n - mean * mean
-                # Stan's regularization toward a unit metric when the window is
-                # small, so a short/degenerate window can't produce a wild scale.
-                var = (acc_n / (acc_n + 5.0)) * var + 1e-3 * (5.0 / (acc_n + 5.0))
-                metric_obj = DiagonalMetric(np.maximum(var, 1e-12))
-                acc_n, acc_sum, acc_sumsq = 0, np.zeros(dim), np.zeros(dim)
+                if adapt_mass == "diag":
+                    # Stan's regularization toward a unit metric when the window
+                    # is small, so a short/degenerate window can't emit a wild
+                    # scale. (Identical arithmetic to the inline version this
+                    # replaced; tests/test_adapt.py asserts exact equality.)
+                    var = stan_shrink(moments.variance(), moments.n)
+                    metric_obj = DiagonalMetric(np.maximum(var, 1e-12))
+                else:
+                    metric_obj = DenseMetric(
+                        estimate_covariance(moments, shrinkage=dense_shrinkage)
+                    )
+                moments.reset()
                 if adapt_step_size:
                     mu, h_bar, log_eps_bar = reset_dual_averaging(eps)
                     da_t = 0.0
