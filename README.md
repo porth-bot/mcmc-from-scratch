@@ -325,8 +325,9 @@ The metric widens $\mu$ and the $\eta_j$ — the coordinates the unit step size
 under-served — driving them to near-independence ($\tau_{\text{int}}\to 1$, hence
 the shared ceiling of 47.8). But $\log\tau$ gains only 2.4×: **a diagonal metric
 rescales marginals, it cannot rotate**, so the funnel curvature in $(\log\tau,
-\eta)$ survives. That residual is exactly what a dense metric or NUTS is for
-(Days 17–18) — the honest limit of the cheap fix.
+\eta)$ survives. That residual is exactly what a dense metric or NUTS is for —
+the honest limit of the cheap fix. NUTS is §9; the dense metric, and what it
+costs to *estimate* one from the same warmup, is §13.
 
 ### 8. Rank-normalized split-$\hat R$ (`experiments/rank_rhat.py`)
 
@@ -683,6 +684,82 @@ numbers are the i.i.d. ones above.
 
 ![heavy tails](figures/heavy_tails.png)
 
+### 13. Estimating a dense metric, and the loss it should be tuned for (`experiments/dense_metric_estimation.py`)
+
+§7 ends on a measured limit: a diagonal metric rescales marginals and cannot
+rotate, so $\log\tau$ gains $2.4\times$ where $\eta_1$ gains $14.8\times$. The
+dense metric $M^{-1} = \Sigma_\pi$ is the fix on paper — it makes the whitened
+Hessian exactly $I$, $\kappa = 1$, where the best possible *diagonal* leaves
+$\kappa(R)$, the correlation matrix's own conditioning (theory §4.10). Warmup
+does not get $\Sigma_\pi$. It gets a window of draws, and has to estimate
+$d(d+1)/2$ numbers from the window that gave the diagonal $d$ of them. This
+section asks what survives that, on an AR(1) Gaussian ($\Sigma_{ij} =
+\rho^{|i-j|}$, $\rho = 0.95$) where every answer is known in closed form.
+
+**The regularization is not a formality.** A window of $n$ pooled draws gives a
+covariance of rank $\le n - 1$, so at $n \le d$ it is singular — and the failure
+is *sometimes silent*. At $n = d = 12$ the smallest eigenvalue lands at
+$+2\times10^{-16}$, the Cholesky succeeds, and the sampler runs with a metric of
+condition number $2\times10^{16}$; one draw fewer and the sign flips and it
+raises. Two regularizers are implemented ([`mcmc/adapt.py`](mcmc/adapt.py)):
+Stan's ridge, $\hat\Sigma \leftarrow \frac{n}{n+5}\hat\Sigma +
+10^{-3}\frac{5}{n+5}I$, which is the same line the diagonal path already runs
+and is a singularity guard rather than shrinkage; and Ledoit–Wolf, the
+closed-form Frobenius-optimal shrinkage toward a scaled identity (derived in
+theory §4.11).
+
+**The two losses rank them oppositely.** Medians over 40 windows, $d = 10$:
+
+| $n/d$ | | sample $S$ | Stan ridge | Ledoit–Wolf |
+|---|---|---|---|---|
+| 0.5 | rel. Frobenius error | **0.56** | 0.63 | 0.71 |
+|     | $\kappa(\hat\Sigma\Sigma^{-1})$ | $\infty$ | $1.1\times10^3$ | **35** |
+| 1   | rel. Frobenius error | **0.43** | 0.48 | 0.54 |
+|     | $\kappa$ | $5\times10^{15}$ | 359 | **18** |
+| 2   | rel. Frobenius error | **0.31** | 0.37 | 0.42 |
+|     | $\kappa$ | 19.7 | 19.1 | **9.8** |
+| 20  | rel. Frobenius error | **0.101** | 0.105 | 0.109 |
+|     | $\kappa$ | 2.18 | 2.18 | **2.16** |
+
+The raw sample covariance is the **best** of the three in Frobenius error at
+every window size and the **worst by sixteen orders of magnitude** as a metric —
+for the same reason it wins: truncating small directions to zero is close in
+squared error and fatal to a quantity that divides by the smallest eigenvalue.
+An estimator tuned for a sum-of-squares loss owes nothing to a
+ratio-of-eigenvalues loss. Past $n/d \approx 20$ the three agree to a couple of
+percent, which is why `dense_shrinkage="stan"` is the default and Ledoit–Wolf is
+what to reach for on a short window.
+
+**Estimation cost against algebraic gain.** Fix the window at 400 draws and grow
+$d$: the achieved $\kappa$ degrades from 1.28 ($d=2$) to 7.2 ($d=128$, where
+$n/d = 3.1$), but $\kappa(R)$ grows faster (39 → 1337), so the gain over the
+best possible diagonal *rises* to $\approx 276$ at $d = 32$ and is still 186 at
+$d = 128$. On this family the estimate does not fall apart first — the reason to
+prefer a diagonal at large $d$ is the $O(d^2)$ per-step cost, not the estimate.
+
+**And a trap worth publishing.** Comparing metrics at a *shared* trajectory
+length understates the dense metric by an order of magnitude. Optimal $L$ tracks
+the slowest direction's period, $\sim\sqrt\kappa$; whitening collapses every
+period to one, so a shared $L$ charges the whitened chain for gradients it does
+not need. ESS per 1000 gradients, warmup charged, each metric swept over
+$L \in \{1,2,5,10,25,50\}$:
+
+| metric | achieved $\kappa$ | best $L$ | ESS/kgrad at its best $L$ | at a shared $L=25$ |
+|---|---|---|---|---|
+| identity | 324 | 25 | 16.8 | 16.8 |
+| diagonal | 322 | 25 | 15.5 | 15.5 |
+| dense (Stan ridge) | 1.36 | 2 | **165.0** | 18.5 |
+| dense (Ledoit–Wolf) | 1.37 | 2 | 162.9 | 18.3 |
+
+$9.8\times$ over the identity metric when each gets the $L$ it wants, $1.1\times$
+at a shared one. ($\sqrt\kappa$ predicts an $L$ ratio of 15; the measured one is
+$25/2 \approx 12$.) The diagonal metric landing *below* the identity is not
+noise: this target's marginals are already unit variance, so there is no scale
+disparity for a diagonal to remove, and what is left is warmup spent on a metric
+that does nothing — §7's claim in its least flattering form.
+
+![dense metric estimation](figures/dense_metric_estimation.png)
+
 ### Appendix: batched chains scale almost for free
 
 Every sampler advances all its chains in lockstep as one batched NumPy
@@ -792,6 +869,7 @@ python vectorized_scaling.py    # ~3 s   (wall-clock per step vs chain count)
 python ais.py                   # ~40 s  (annealed importance sampling: log Z against exact)
 python sghmc.py                 # ~11 s  (SGHMC vs its closed form, and vs SGLD at equal cost)
 python heavy_tails.py           # ~17 s  (Student-t: what breaks, and what ESS misses)
+python dense_metric_estimation.py  # ~114 s (dense metric from warmup: shrinkage, and the loss it is tuned for)
 ```
 
 (Those are measured, not estimated: the timings come from the `reproduce.sh`
