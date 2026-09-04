@@ -6,6 +6,12 @@ milliseconds rather than trusted from a several-minute run. What is checked
 here is that the *reporting code* reproduces the closed forms, since a study
 whose whole content is "these two numbers are exactly equal" fails silently if
 the table is built from the wrong matrix.
+
+This is the first test module in the repo to import an experiment rather than
+restate it, so it comes with a constraint attached: CI installs numpy + pytest
+only, and ``experiments/common.py`` imports matplotlib. ``funnel_metric``
+therefore defers that import into the two functions that plot and print, and
+these tests run on the numpy-only job rather than skipping there.
 """
 
 import sys

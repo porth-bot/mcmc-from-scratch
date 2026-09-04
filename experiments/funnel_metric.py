@@ -45,11 +45,17 @@ import math
 
 import numpy as np
 
-from common import plt, print_table, savefig
 from mcmc.adapt import definite_fraction, whitened_abs_condition_numbers
 from mcmc.diagnostics import ess, integrated_autocorr_time, split_rhat
 from mcmc.hmc import hmc
 from mcmc.targets import NealsFunnel
+
+# ``common`` pulls in matplotlib, and CI installs numpy + pytest only (the
+# repo's standing contract, see reproduce.sh). The studies below are pure
+# functions of the target, so tests/test_funnel_metric.py imports this module
+# and asserts them there -- which it can only do if importing it does not
+# require a plotting stack. Hence the two deferred imports rather than one at
+# the top: this file is both a script and a tested module.
 
 SEED = 20260928
 N_CHAINS = 4
@@ -281,6 +287,8 @@ def step_size_limit(model, cov, vs, seed=SEED + 5):
 
 def make_figure(cov, est, sweep, kappas, z, bin_rows, edges, vs, eps_curves,
                 adapted_eps):
+    from common import plt, savefig
+
     fig, axes = plt.subplots(2, 2, figsize=(9.6, 6.8))
     d = cov.shape[0]
 
@@ -360,6 +368,8 @@ def make_figure(cov, est, sweep, kappas, z, bin_rows, edges, vs, eps_curves,
 
 
 def main():
+    from common import print_table
+
     model = NealsFunnel(dim=DIM, sigma_v=SIGMA_V)
     _, cov = model.moments()
     print("=" * 78)
