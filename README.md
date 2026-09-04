@@ -63,7 +63,7 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021 — Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
 | [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
 | [`mcmc/tails.py`](mcmc/tails.py) | Heavy-tail rates: the generalized-CLT exponents for the sample mean and the plug-in sd, exact Student-t interval probabilities by quadrature, and the coverage/width machinery §12 scores them with |
-| [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients |
+| [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients — and the hand-derived **Hessian**, whose eta block is diagonal with entries $1 + \tau^2/\sigma_j^2$, which is how §14 shows the residual a global metric leaves is position and not rotation |
 | [`mcmc/bnn.py`](mcmc/bnn.py) | Bayesian neural network (1-hidden-layer tanh MLP) with hand-written backprop log-posterior gradient, sampled by HMC; plus an Adam MAP/deep-ensemble trainer sharing the same model and objective |
 
 All log-densities are batched over chains, so 4 chains advance in lockstep as
@@ -323,11 +323,21 @@ no reliability. The win is not a fixed multiplier — it is *scale-independence*
 
 The metric widens $\mu$ and the $\eta_j$ — the coordinates the unit step size
 under-served — driving them to near-independence ($\tau_{\text{int}}\to 1$, hence
-the shared ceiling of 47.8). But $\log\tau$ gains only 2.4×: **a diagonal metric
-rescales marginals, it cannot rotate**, so the funnel curvature in $(\log\tau,
-\eta)$ survives. That residual is exactly what a dense metric or NUTS is for —
-the honest limit of the cheap fix. NUTS is §9; the dense metric, and what it
-costs to *estimate* one from the same warmup, is §13.
+the shared ceiling of 47.8). But $\log\tau$ gains only 2.4×, and that residual is
+the honest limit of the cheap fix. The three gains hold up at five seeds (§14
+re-measures them at 1.27× / 2.79× / 13.3×, with $\log\tau$'s spanning 2.2–3.7
+across seeds, so the single-seed 2.4 above is inside its own spread).
+
+What the residual *is* was asserted here and is now measured, and the assertion
+was wrong. This section used to read "a diagonal metric rescales marginals, it
+cannot rotate, so the funnel curvature in $(\log\tau, \eta)$ survives — that
+residual is exactly what a dense metric or NUTS is for". The first half is a
+true statement about diagonal metrics and the second half does not follow here:
+this posterior's correlation matrix has $\kappa(R) = 1.42$, so there is
+essentially no rotation for a dense metric to do, and §14 measures that it
+duly does nothing. The residual is *position-dependent* curvature, which no
+global metric of any shape removes. NUTS is §9; the dense metric and what it
+costs to *estimate* is §13; §14 puts it on this posterior.
 
 ### 8. Rank-normalized split-$\hat R$ (`experiments/rank_rhat.py`)
 
@@ -687,8 +697,11 @@ numbers are the i.i.d. ones above.
 ### 13. Estimating a dense metric, and the loss it should be tuned for (`experiments/dense_metric_estimation.py`)
 
 §7 ends on a measured limit: a diagonal metric rescales marginals and cannot
-rotate, so $\log\tau$ gains $2.4\times$ where $\eta_1$ gains $14.8\times$. The
-dense metric $M^{-1} = \Sigma_\pi$ is the fix on paper — it makes the whitened
+rotate, so $\log\tau$ gains $2.4\times$ where $\eta_1$ gains $14.8\times$. This
+section builds the dense metric on a target *chosen* to have correlation to
+remove, so that the estimator can be scored against a known answer; whether
+eight schools is such a target is §14's question, and the answer there is no.
+The dense metric $M^{-1} = \Sigma_\pi$ is the fix on paper — it makes the whitened
 Hessian exactly $I$, $\kappa = 1$, where the best possible *diagonal* leaves
 $\kappa(R)$, the correlation matrix's own conditioning (theory §4.10). Warmup
 does not get $\Sigma_\pi$. It gets a window of draws, and has to estimate
@@ -759,6 +772,106 @@ disparity for a diagonal to remove, and what is left is warmup spent on a metric
 that does nothing — §7's claim in its least flattering form.
 
 ![dense metric estimation](figures/dense_metric_estimation.png)
+
+Everything above is on a target built to have $\kappa(R) = 324$. §14 puts the
+same code on the posterior §7's limitation was measured on, where $\kappa(R)$
+is 1.42, and the $9.8\times$ becomes nothing — which is the useful half of
+knowing what a dense metric is for.
+
+### 14. Eight schools, dense vs diagonal — the answer is no (`experiments/eight_schools_metric.py`)
+
+§7 measured a residual and named a cause: $\log\tau$ gains only $2.4\times$ from
+the diagonal metric because a diagonal "cannot rotate". §13 built the dense
+metric that can, and got $9.8\times$ on a target with correlation to remove.
+This section runs it on the posterior the residual was measured on. Three
+studies, in the order that lets the third explain the second.
+
+**A. What rotation is available, before any sampler runs.** A $4\times40$k
+reference run gives the posterior covariance in the non-centered coordinates
+$(\mu, \log\tau, \eta_1..\eta_8)$. Under a Gaussian approximation each metric's
+achievable conditioning is then closed form (§4.10): the identity leaves
+$\kappa(\Sigma)$, the *best possible* diagonal leaves exactly $\kappa(R)$, and
+the exact dense metric gives 1.
+
+| metric | $\kappa$ of the whitened Hessian |
+|---|---|
+| identity | 53.4 |
+| best possible diagonal | **1.42** |
+| exact dense | 1.00 |
+
+The largest off-diagonal correlation in this posterior is $0.090$. So a dense
+metric's entire algebraic headroom over a diagonal here is a factor 1.42 in
+conditioning — $1.19\times$ in step size — and that is an upper bound recorded
+before the sampler ran.
+
+**B. Through the sampler.** Five metrics, trajectory length swept per metric
+(§13's shared-$L$ trap), five seeds, warmup charged. Two of the five are
+*oracle* metrics built from the reference covariance rather than estimated in
+warmup, so that a null result cannot be blamed on the estimate.
+
+| metric | best $L$ | worst-coord ESS/1k grad | at $L=20$ | cells at $\tau=1$ |
+|---|---|---|---|---|
+| identity | 8 | 11.1 | 3.2 | 5/15 |
+| diagonal (adapted) | 5 | 145.5 | 24.3 | **15/15** |
+| dense (adapted) | 5 | 145.5 | 27.0 | **15/15** |
+| diagonal (oracle) | 5 | 145.5 | 21.2 | **15/15** |
+| dense (oracle) | 5 | 145.5 | 18.8 | **15/15** |
+
+The four adapted rows are identical at their best $L$, and that number is not a
+result. Geyer's estimator clamps $\tau$ at 1, so every one of those 15 (seed,
+coordinate) cells is *censored*: the arms are producing draws the estimator
+cannot distinguish from independent, and four bounds coinciding is not a
+measured tie. The comparison has to be made where it can still discriminate —
+$L = 3$, the longest trajectory at which no median $\tau$ is clamped:
+
+| metric | $\tau$ for $\log\tau$ | across 5 seeds |
+|---|---|---|
+| identity | 1.05 | 1.00–1.10 |
+| diagonal (adapted) | 1.71 | 1.67–1.86 |
+| dense (adapted) | 1.62 | 1.47–1.78 |
+| diagonal (oracle) | 1.69 | 1.67–1.80 |
+| dense (oracle) | 1.65 | 1.64–1.68 |
+
+Dense leads diagonal by $1.06\times$ on the binding coordinate, well inside
+either arm's seed range. **The dense metric is not measurably better than the
+diagonal on this posterior**, and the oracle rows say why not: handing it the
+true covariance changes nothing, so this is not an estimation failure. (The
+warmup estimate is in fact good — marginal sds within 5.2% of the reference,
+and its off-diagonal correlations track the reference's at $r = 0.79$ over
+entries whose largest magnitude is 0.090, so what it reproduces faithfully is
+the absence of structure.)
+
+Note also what the identity metric does with $L$: its best is $L=8$, and it is
+*worse* at $L=20$ than at $L=5$. Fixed-$L$ HMC resonates, which is §7's other
+finding and §9's motivation.
+
+**C. So what is the residual?** The log posterior's Hessian is available in
+closed form ([`mcmc/models.py`](mcmc/models.py), hand-derived and
+finite-difference checked), so $\kappa$ can be evaluated at *every* posterior
+draw instead of once at a Gaussian approximation:
+
+| metric | median local $\kappa$ | 10th | 90th | 90th/10th |
+|---|---|---|---|---|
+| identity | 57.6 | 28.7 | 163.0 | 5.7 |
+| diagonal | 2.38 | 1.46 | 6.60 | 4.5 |
+| dense | 2.23 | 1.33 | 6.07 | 4.6 |
+
+Cut by $\log\tau$, the same numbers say it plainly — the median local $\kappa$
+the diagonal achieves runs 3.35 → 1.88 → 1.46 → 2.32 → 5.95 across quintiles, a
+$4.1\times$ swing, while the best the rotation buys in any quintile is
+$1.17\times$:
+
+<p align="center"><img src="figures/eight_schools_metric.png" width="760"></p>
+
+**The residual §7 named is position, not rotation.** It is $4\times$ larger than
+anything a global metric of any shape can address, and 2.04% of posterior draws
+have an indefinite $-H$ — a saddle, which no positive-definite mass matrix
+conditions at all. The eta block of the Hessian makes the mechanism explicit:
+it is diagonal with entries $1 + \tau^2/\sigma_j^2$, so the curvature there is a
+function of *where in the posterior you are*, and a single matrix estimated once
+in warmup sees only its average. The thing that would fix it is a metric that
+varies with position — Riemannian HMC — which is not implemented here and is
+the standing limitation this section leaves.
 
 ### Appendix: batched chains scale almost for free
 
@@ -834,7 +947,7 @@ One command, from a clean clone:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 16 experiments: ~6 min total
+./reproduce.sh                  # tests, then all 17 experiments: ~13 min total
 ```
 
 `requirements.txt` pins the exact versions every committed figure and table was
@@ -842,7 +955,7 @@ produced with (Python 3.12.13); `pyproject.toml` keeps lower bounds instead, so
 CI goes on testing against current releases on 3.9 and 3.12.
 
 **How exact is it?** Rerunning the whole suite in that pinned environment
-regenerates 22 of the 23 committed PNGs byte-for-byte — the samplers are seeded
+regenerates 24 of the 25 committed PNGs byte-for-byte — the samplers are seeded
 and NumPy's bit generators are stable across versions, so the chains, and
 therefore the ESS and R-hat tables, are identical. The one file that differs is
 `vectorized_scaling.png`, which plots wall-clock per step and so measures the
@@ -853,27 +966,30 @@ To run a single experiment instead:
 
 ```bash
 cd experiments
-python validate_exact.py        # ~8 s
-python optimal_scaling.py       # ~6 s   (acceptance rate vs efficiency: the 0.234 rule)
-python thinning.py              # ~3 s   (what thinning costs)
-python gibbs_scan.py            # ~2 s   (systematic vs random scan)
-python funnel.py                # ~12 s
-python eight_schools.py         # ~6 s
-python tempering.py             # ~2 s   (bimodal: tempering vs a trapped chain)
-python bnn.py                   # ~110 s (Bayesian NN: HMC vs ensemble vs MAP, + the metric study)
-python external_benchmark.py    # ~10 s  (ours vs emcee; needs `pip install emcee`)
-python mass_matrix.py           # ~35 s  (diagonal metric: scale-free efficiency)
+python validate_exact.py        # ~15 s
+python optimal_scaling.py       # ~9 s   (acceptance rate vs efficiency: the 0.234 rule)
+python thinning.py              # ~4 s   (what thinning costs)
+python gibbs_scan.py            # ~4 s   (systematic vs random scan)
+python funnel.py                # ~22 s
+python eight_schools.py         # ~12 s
+python tempering.py             # ~3 s   (bimodal: tempering vs a trapped chain)
+python bnn.py                   # ~66 s  (Bayesian NN: HMC vs ensemble vs MAP, + the metric study)
+python external_benchmark.py    # ~16 s  (ours vs emcee; needs `pip install emcee`)
+python mass_matrix.py           # ~58 s  (diagonal metric: scale-free efficiency)
 python rank_rhat.py             # ~1 s   (rank-normalized R-hat: heavy-tail robustness)
-python nuts_benchmark.py        # ~35 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
-python vectorized_scaling.py    # ~3 s   (wall-clock per step vs chain count)
-python ais.py                   # ~40 s  (annealed importance sampling: log Z against exact)
-python sghmc.py                 # ~11 s  (SGHMC vs its closed form, and vs SGLD at equal cost)
+python nuts_benchmark.py        # ~55 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
+python vectorized_scaling.py    # ~4 s   (wall-clock per step vs chain count)
+python ais.py                   # ~56 s  (annealed importance sampling: log Z against exact)
+python sghmc.py                 # ~8 s   (SGHMC vs its closed form, and vs SGLD at equal cost)
 python heavy_tails.py           # ~17 s  (Student-t: what breaks, and what ESS misses)
-python dense_metric_estimation.py  # ~114 s (dense metric from warmup: shrinkage, and the loss it is tuned for)
+python dense_metric_estimation.py  # ~58 s (dense metric from warmup: shrinkage, and the loss it is tuned for)
+python eight_schools_metric.py  # ~310 s (dense vs diagonal on eight schools: it buys nothing, and why)
 ```
 
-(Those are measured, not estimated: the timings come from the `reproduce.sh`
-run above, which prints a per-step number.)
+(Those are measured, not estimated, and all eighteen come from the *same*
+`reproduce.sh` run so they add up to the total above — the previous list did
+not, having accumulated across sessions and machines, and disagreed with a
+single run by up to 2× in both directions.)
 
 `emcee` is used *only* by the external benchmark — it is not a dependency of the
 package or the tests (CI installs numpy + pytest only). Install it with
@@ -905,12 +1021,19 @@ state to warm up: the "log" this repo replays from is the seed plus the code.
 ## Limitations / next
 
 - Trajectory length is now adaptive (NUTS, done, §9): the U-turn criterion
-  removes the fixed-$L$ knob and buys ~4–6× the ESS per gradient. The remaining
-  metric is still *diagonal* (§7) — it rescales marginals but cannot rotate, so a
-  correlated funnel's curvature survives. Both our NUTS and Stan's diverge in the
-  *centered* funnel neck; the fix there is non-centering, not the sampler. A
-  *dense* or Riemannian metric is the principled next step for curvature the
-  reparameterization cannot remove.
+  removes the fixed-$L$ knob and buys ~4–6× the ESS per gradient. The *dense*
+  metric that used to sit here as the next step is done too (§13, §14) and the
+  result is a negative worth keeping: it is worth $9.8\times$ on a target with
+  correlation to remove and **nothing** on eight schools, whose $\kappa(R)$ is
+  1.42. What is left after it is position-dependent curvature — the local
+  $\kappa$ of the whitened Hessian swings $4.1\times$ across the posterior where
+  the best available rotation moves it $1.17\times$, and 2% of draws sit at a
+  saddle no positive-definite mass matrix conditions. **Riemannian HMC**, a
+  metric that varies with position, is the principled next step, and it is not
+  implemented here. Two smaller gaps beside it: `mcmc/nuts.py` still carries its
+  own inline diagonal arithmetic, so a dense metric is an HMC option and not yet
+  a NUTS one; and both our NUTS and Stan's diverge in the *centered* funnel
+  neck, where the fix is non-centering rather than the sampler.
 - **Phase 2 (done):** Bayesian neural network posterior via this repo's HMC on
   a small MLP — predictive uncertainty and calibration vs a MAP point estimate
   and a deep ensemble ([`experiments/bnn.py`](experiments/bnn.py), section 5).
