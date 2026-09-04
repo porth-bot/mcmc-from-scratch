@@ -113,6 +113,10 @@ pathology disappears.
 
 <p align="center"><img src="figures/funnel_v_marginal.png" width="520"></p>
 
+The obvious question that leaves — whether a better *mass matrix*, rather than
+a change of variables, would have done it — is answered in §15, and the answer
+is no, for a reason available in closed form on this target.
+
 ### 3. Real data: eight schools (`experiments/eight_schools.py`)
 
 Rubin's (1981) SAT coaching study under the hierarchical model
@@ -873,6 +877,126 @@ in warmup sees only its average. The thing that would fix it is a metric that
 varies with position — Riemannian HMC — which is not implemented here and is
 the standing limitation this section leaves.
 
+### 15. The funnel: where the dense metric fails too (`experiments/funnel_metric.py`)
+
+§14's null was measured: on eight schools the dense metric buys $1.06\times$,
+inside the seed range, and the residual turned out to be position rather than
+rotation. That was one posterior, and every quantity in the argument came from
+a reference run. Neal's funnel lets the same argument be made from identities
+(§4.12), so the prediction is on the record before the sampler starts.
+
+**A. The headroom is exactly 1.00.** The tower rule gives
+$\operatorname{Cov}(v, x_i) = E[v\,E[x_i \mid v]] = 0$ and
+$\operatorname{Cov}(x_i, x_j) = E[E[x_i \mid v]\,E[x_j \mid v]] = 0$, so
+
+$$\Sigma = \operatorname{diag}\left(\sigma_v^2,\ e^{\sigma_v^2/2}, \dots\right)
+= \operatorname{diag}(9.00,\ 90.02 \times 9), \qquad R = I .$$
+
+| metric | $\kappa$ of the whitened Hessian |
+|---|---|
+| identity | 10.00 |
+| best possible diagonal | **1.00** |
+| exact dense | **1.00** |
+
+The best diagonal and the exact dense metric are *the same matrix*. On eight
+schools the headroom was 1.42 and had to be measured; here it is a consequence
+of the target's symmetry. And what a dense warmup actually estimates is worse
+than useless:
+
+| quantity | estimate | true |
+|---|---|---|
+| $\mathrm{sd}[v]$ | 2.25 | 3.00 |
+| median $\mathrm{sd}[x_i]$ | 2.76 | 9.49 |
+| max $\lvert r_{ij}\rvert$ | **0.317** | **0** |
+
+$\operatorname{Var}(x_i^2) = 3e^{2\sigma_v^2} = e^{18}$, so the estimator is
+carried by its single largest $e^v$ draw and a warmup window comes back at
+$0.29\times$ the truth. The off-diagonals it reports are noise around an exact
+zero. The dense metric's one extra degree of freedom over the diagonal is spent
+rotating that noise.
+
+**B. Through the sampler, and every arm is wrong.** Five metrics, six
+trajectory lengths, four seeds, warmup charged, two oracle arms handed the
+exact $\Sigma$.
+
+| metric | best $L$ | ESS($v$)/1k grad | $\tau(v)$ | $\mathrm{sd}[v]$ (true 3.00) | adapted $\varepsilon$ | divergent |
+|---|---|---|---|---|---|---|
+| identity | 2 | 0.50 | 522 | 2.32 | 0.254 | 440 |
+| diagonal (adapted) | 1 | 0.76 | 518 | 1.75 | 0.139 | 55 |
+| dense (adapted) | 1 | 0.48 | 859 | 1.78 | 0.179 | 145 |
+| diagonal (oracle) | 1 | 0.49 | 800 | 1.99 | 0.055 | 298 |
+| dense (oracle) | 10 | 0.61 | 149 | 2.48 | 0.043 | 235 |
+
+The column that matters is not ESS. $\mathrm{sd}[v]$ misses $\sigma_v = 3$ at
+every metric and every $L$ (1.75–2.69 across the whole sweep), which is the
+funnel's characteristic failure: a chain that never enters the neck reports a
+short autocorrelation time *and a wrong answer*, so ranking these arms by ESS
+would rank five wrong answers. Every one of them is under-sampling the neck.
+
+Dense over diagonal, paired by seed, ranges 0.63–1.38 across $L$ with per-seed
+ranges that all straddle 1. The oracle pair calibrates that scatter, and this
+is the part worth reading: those two arms are the *same matrix*, since
+`DiagonalMetric(v)` and `DenseMetric(diag(v))` differ only in how they
+associate the same reals ([`mcmc/metric.py`](mcmc/metric.py)). Their ratio is
+therefore pure noise by construction — and it comes back 1.000 at $L = 1$ and
+2, then 1.383 at $L = 10$. **That is the resolution of this comparison,
+measured, and every adapted ratio sits inside it.**
+
+**C. Why.** The Hessian is closed form
+([`mcmc/targets.py`](mcmc/targets.py)), so the local conditioning is available
+at every draw — and here it can be evaluated at *exact* draws rather than a
+chain's, which matters precisely because every chain above under-represents the
+neck. Reported as $\max|\lambda|/\min|\lambda|$, because $-H$ is positive
+definite at **0 of 5000 draws** (it needs $\chi^2_9 < 0.22$, §4.12); by
+Sylvester's law of inertia that fraction is the same for every metric, so it is
+reported once rather than per row.
+
+| $v$ bin | identity | diagonal | dense | dense gain |
+|---|---|---|---|---|
+| $[-11.9, -2.5]$ | 16.4 | 126.9 | 126.9 | 1.000 |
+| $[-2.5, -0.7]$ | 6.4 | 16.0 | 16.0 | 1.000 |
+| $[-0.7, +0.8]$ | 9.1 | 6.7 | 6.7 | 1.000 |
+| $[+0.8, +2.6]$ | 27.5 | 6.9 | 6.9 | 1.000 |
+| $[+2.6, +8.9]$ | 224.3 | 26.1 | 26.1 | 1.000 |
+
+Position moves the achievable conditioning $19\times$ across quintiles. The
+rotation moves it $1.000\times$ — exactly, and asserted in the script rather
+than eyeballed. §14's conclusion, with the second column now an identity.
+
+<p align="center"><img src="figures/funnel_metric.png" width="760"></p>
+
+**D. The mechanism, and the surprise.** Leapfrog is stable iff
+$\varepsilon\sqrt{\lambda_{\max}} < 2$, so each metric has a largest admissible
+step at each height. Along one scaling orbit of the funnel:
+
+| metric | $\varepsilon_{\max}$ at $v = -7.73$ | at $v = 0$ | at $v = +7.73$ |
+|---|---|---|---|
+| identity | **0.041** | 0.754 | 0.867 |
+| exact $\Sigma$ (diagonal = dense) | **0.004** | 0.157 | 0.289 |
+
+Note which way that runs. **The metric built from the exact covariance admits a
+neck step ten times smaller than doing nothing at all.** $\operatorname{Var}
+(x_i) = e^{\sigma_v^2/2} = 90$ is a number the *mouth* chose; whitening by it
+multiplies the neck's curvature by 90. §4.12's congruence says why this is not
+a fixable detail: $A(T_c z) = D_c A(z) D_c$, so a global metric slides the
+curve along the funnel's spine, and sliding it toward the mouth is sliding it
+away from the neck. There is no direction to slide that helps both.
+
+Both adapted arms settle at $\varepsilon \approx 0.08$, which is unstable below
+$v \approx -2$: **25–28% of the $v$-marginal is out of reach at the step size
+warmup chose**, and no mass matrix moves that, because a mass matrix is what
+chose it.
+
+**What does work is not a metric.** §2's non-centered arm mixes essentially
+perfectly on this same target, and $x_i = e^{v/2} z_i$ is a *position-dependent*
+change of coordinates — the thing a global $M$ cannot be. Riemannian HMC
+(Girolami and Calderhead, 2011) is the general form: a metric $M(z)$ rebuilt at
+every point, which absorbs the $e^v$ span by construction. It costs a
+non-separable Hamiltonian, an implicit generalized leapfrog, and a positive
+definite surrogate where $-H$ is indefinite — which, on this target, is
+everywhere. It is not implemented here, and §14's standing limitation now has
+two measurements behind it instead of one.
+
 ### Appendix: batched chains scale almost for free
 
 Every sampler advances all its chains in lockstep as one batched NumPy
@@ -947,7 +1071,7 @@ One command, from a clean clone:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 17 experiments: ~13 min total
+./reproduce.sh                  # tests, then all 18 experiments: ~16 min total
 ```
 
 `requirements.txt` pins the exact versions every committed figure and table was
@@ -955,7 +1079,7 @@ produced with (Python 3.12.13); `pyproject.toml` keeps lower bounds instead, so
 CI goes on testing against current releases on 3.9 and 3.12.
 
 **How exact is it?** Rerunning the whole suite in that pinned environment
-regenerates 24 of the 25 committed PNGs byte-for-byte — the samplers are seeded
+regenerates 25 of the 26 committed PNGs byte-for-byte — the samplers are seeded
 and NumPy's bit generators are stable across versions, so the chains, and
 therefore the ESS and R-hat tables, are identical. The one file that differs is
 `vectorized_scaling.png`, which plots wall-clock per step and so measures the
@@ -968,25 +1092,26 @@ To run a single experiment instead:
 cd experiments
 python validate_exact.py        # ~15 s
 python optimal_scaling.py       # ~9 s   (acceptance rate vs efficiency: the 0.234 rule)
-python thinning.py              # ~4 s   (what thinning costs)
-python gibbs_scan.py            # ~4 s   (systematic vs random scan)
+python thinning.py              # ~5 s   (what thinning costs)
+python gibbs_scan.py            # ~3 s   (systematic vs random scan)
 python funnel.py                # ~22 s
-python eight_schools.py         # ~12 s
+python eight_schools.py         # ~11 s
 python tempering.py             # ~3 s   (bimodal: tempering vs a trapped chain)
 python bnn.py                   # ~66 s  (Bayesian NN: HMC vs ensemble vs MAP, + the metric study)
 python external_benchmark.py    # ~16 s  (ours vs emcee; needs `pip install emcee`)
 python mass_matrix.py           # ~58 s  (diagonal metric: scale-free efficiency)
 python rank_rhat.py             # ~1 s   (rank-normalized R-hat: heavy-tail robustness)
-python nuts_benchmark.py        # ~55 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
+python nuts_benchmark.py        # ~57 s  (NUTS vs fixed-L HMC vs RWMH: ESS per gradient)
 python vectorized_scaling.py    # ~4 s   (wall-clock per step vs chain count)
 python ais.py                   # ~56 s  (annealed importance sampling: log Z against exact)
 python sghmc.py                 # ~8 s   (SGHMC vs its closed form, and vs SGLD at equal cost)
-python heavy_tails.py           # ~17 s  (Student-t: what breaks, and what ESS misses)
-python dense_metric_estimation.py  # ~58 s (dense metric from warmup: shrinkage, and the loss it is tuned for)
-python eight_schools_metric.py  # ~310 s (dense vs diagonal on eight schools: it buys nothing, and why)
+python heavy_tails.py           # ~16 s  (Student-t: what breaks, and what ESS misses)
+python dense_metric_estimation.py  # ~59 s (dense metric from warmup: shrinkage, and the loss it is tuned for)
+python eight_schools_metric.py  # ~307 s (dense vs diagonal on eight schools: it buys nothing, and why)
+python funnel_metric.py         # ~193 s (the funnel: the same answer, from closed forms)
 ```
 
-(Those are measured, not estimated, and all eighteen come from the *same*
+(Those are measured, not estimated, and all nineteen come from the *same*
 `reproduce.sh` run so they add up to the total above — the previous list did
 not, having accumulated across sessions and machines, and disagreed with a
 single run by up to 2× in both directions.)
@@ -996,7 +1121,8 @@ package or the tests (CI installs numpy + pytest only). Install it with
 `pip install emcee` or `pip install -e '.[bench]'`.
 
 Figures land in `figures/`; every table above is printed by the scripts.
-Seeds are fixed (`SEED = 20260703`). There is nothing to download and no cached
+Seeds are fixed (`SEED = 20260703`; the two metric studies carry their own,
+written at the top of each script). There is nothing to download and no cached
 state to warm up: the "log" this repo replays from is the seed plus the code.
 
 ## Design notes
@@ -1028,8 +1154,15 @@ state to warm up: the "log" this repo replays from is the seed plus the code.
   1.42. What is left after it is position-dependent curvature — the local
   $\kappa$ of the whitened Hessian swings $4.1\times$ across the posterior where
   the best available rotation moves it $1.17\times$, and 2% of draws sit at a
-  saddle no positive-definite mass matrix conditions. **Riemannian HMC**, a
-  metric that varies with position, is the principled next step, and it is not
+  saddle no positive-definite mass matrix conditions. §15 puts the same question
+  to Neal's funnel, where the whole argument is closed form rather than
+  measured: $R = I$ exactly, so the dense metric's headroom is $1.00$ and not
+  $1.42$; $-H$ is indefinite at *every* draw rather than 2% of them; position
+  moves the local conditioning $19\times$ where the rotation moves it $1.000$;
+  and the metric built from the exact covariance admits a step in the neck
+  $10\times$ *smaller* than the identity, because the marginal variance it
+  whitens by is a number the mouth chose. **Riemannian HMC**, a metric that
+  varies with position, is the principled next step, and it is not
   implemented here. Two smaller gaps beside it: `mcmc/nuts.py` still carries its
   own inline diagonal arithmetic, so a dense metric is an HMC option and not yet
   a NUTS one; and both our NUTS and Stan's diverge in the *centered* funnel
