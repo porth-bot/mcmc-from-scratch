@@ -194,6 +194,98 @@ class NealsFunnel:
             g[:, 1:] = -x * e_neg_v[:, None]
         return g
 
+    def hess_logpdf(self, z: np.ndarray) -> np.ndarray:
+        """Hessian of the log density, ``(batch, dim, dim)``, hand-derived.
+
+        Differentiating the gradient above once more, with s = sum_i x_i^2:
+
+            d2/dv2       = -1/sigma_v^2 - e^{-v} s / 2
+            d2/dv dx_i   = +x_i e^{-v}      (d/dx_i of e^{-v} s / 2, and
+                                             equally d/dv of -x_i e^{-v})
+            d2/dx_i dx_j = -delta_ij e^{-v}
+
+        so, writing A = -H for the local precision,
+
+            A(v, x) = [[ 1/sigma_v^2 + e^{-v} s / 2 ,  -e^{-v} x^T ],
+                       [ -e^{-v} x                  ,   e^{-v} I   ]].
+
+        Two facts follow that the metric experiments use directly.
+
+        **A is almost never positive definite.** Its Schur complement on the x
+        block is 1/sigma_v^2 + e^{-v}s/2 - e^{-v}s = 1/sigma_v^2 - e^{-v}s/2,
+        so A > 0 iff e^{-v} s < 2/sigma_v^2. At a draw from the funnel itself
+        x_i = e^{v/2} z_i with z ~ N(0, I), so e^{-v} s is exactly
+        chi^2_{dim-1} -- a variable with mean dim-1, needing to fall below
+        2/sigma_v^2 = 0.22 at the default settings. The funnel is not
+        log-concave anywhere a sampler actually goes, which is a stronger
+        statement than eight schools' 2% of saddle draws and is why
+        ``whitened_abs_condition_numbers`` exists.
+
+        **A has an exact scaling covariance.** Under the funnel's own scaling
+        map T_c: (v, x) -> (v + c, e^{c/2} x), every e^{-v} s term is invariant
+        and the blocks pick up fixed powers of e^{c/2}:
+
+            A(T_c z) = D_c A(z) D_c,     D_c = diag(1, e^{-c/2}, ..., e^{-c/2}).
+
+        A congruence by a *constant* diagonal is precisely what a global metric
+        does, so shifting along the funnel's spine is indistinguishable from
+        rescaling the metric's x block by e^{-c}. No single global metric can
+        be right at two values of v at once, and how wrong it is grows like
+        e^{|c|}. Sec. 4.12 of ``theory/derivations.md``; checked against
+        ``finite_difference_hess``, and the congruence identity is asserted
+        directly in ``tests/test_targets.py``.
+
+        Dense ``(dim, dim)`` per draw: a diagnostic for a thinned sample, not
+        anything to put inside a trajectory.
+        """
+        z = np.atleast_2d(z)
+        n, d = z.shape
+        v, x = z[:, 0], z[:, 1:]
+        with np.errstate(over="ignore", invalid="ignore"):
+            e_neg_v = np.exp(-v)
+            H = np.zeros((n, d, d))
+            H[:, 0, 0] = -1.0 / self.sigma_v**2 - 0.5 * e_neg_v * np.sum(x * x, axis=1)
+            cross = x * e_neg_v[:, None]
+            H[:, 0, 1:] = cross
+            H[:, 1:, 0] = cross
+            idx = np.arange(1, d)
+            H[:, idx, idx] = -e_neg_v[:, None]
+        return H
+
+    def moments(self) -> tuple[np.ndarray, np.ndarray]:
+        """Exact (mean, cov), and the covariance is *diagonal* -- the point.
+
+        E[v] = 0 and E[x_i] = E[E[x_i | v]] = 0 by the tower rule. For the
+        second moments, with m(t) = E[e^{tv}] = e^{t^2 sigma_v^2 / 2} the
+        log-normal mgf:
+
+            Var(v)       = sigma_v^2
+            Var(x_i)     = E[x_i^2] = E[e^v]      = e^{sigma_v^2 / 2}
+            Cov(v, x_i)  = E[v E[x_i | v]] = 0
+            Cov(x_i,x_j) = E[E[x_i|v] E[x_j|v]] = 0     (i != j)
+
+        Every off-diagonal entry is exactly zero, by symmetry rather than by
+        being small. A dense metric's whole advantage over a diagonal one is
+        the rotation it can apply to a correlated covariance (Sec. 4.10), and
+        here the correlation matrix is exactly the identity, so that advantage
+        is exactly nothing. That is the funnel's answer to Sec. 4.10 recorded
+        in closed form, before any sampler runs.
+
+        The variance of x_i is finite but its *estimator* is not comfortable:
+        Var(x_i^2) = 3 e^{2 sigma_v^2} - e^{sigma_v^2} is e^{18} at the default
+        sigma_v = 3, so a sample covariance from a warmup window is dominated
+        by its single largest e^v draw. ``experiments/funnel_metric.py``
+        measures that spread rather than assuming it.
+        """
+        k = self.dim - 1
+        mean = np.zeros(self.dim)
+        cov = np.diag(
+            np.concatenate(
+                [[self.sigma_v**2], np.full(k, np.exp(0.5 * self.sigma_v**2))]
+            )
+        )
+        return mean, cov
+
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Exact draws via the generative process (v first, then x | v)."""
         v = rng.standard_normal(n) * self.sigma_v

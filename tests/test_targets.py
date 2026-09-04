@@ -10,6 +10,7 @@ from mcmc.targets import (
     Rosenbrock,
     StudentT,
     finite_difference_grad,
+    finite_difference_hess,
 )
 
 RNG = np.random.default_rng(0)
@@ -176,3 +177,110 @@ def test_mixture_exact_moments_match_sampler():
     draws = gm.sample(400_000, np.random.default_rng(2))
     np.testing.assert_allclose(draws.mean(axis=0), gm.mean(), atol=0.03)
     np.testing.assert_allclose(np.cov(draws.T), gm.cov(), atol=0.06)
+
+
+# -- Neal's funnel: the closed forms Sec. 4.12 argues from -----------------
+
+
+def test_funnel_hessian_matches_finite_differences():
+    """The hand-derived Hessian, against a difference of the exact gradient.
+
+    Checked at draws from the funnel itself rather than at a standard normal:
+    the e^{-v} entries span orders of magnitude across the target, and a
+    Hessian that were right only near v = 0 would pass an easier test.
+    """
+    f = NealsFunnel(dim=6, sigma_v=1.5)
+    z = f.sample(12, np.random.default_rng(11))
+    H = f.hess_logpdf(z)
+    fd = finite_difference_hess(f.grad_logpdf, z, eps=1e-5)
+    scale = np.maximum(np.abs(fd).max(axis=(1, 2), keepdims=True), 1.0)
+    assert np.allclose(H / scale, fd / scale, atol=2e-6)
+    # not symmetrized on the way out, so this checks the derivation too
+    assert np.allclose(H, H.transpose(0, 2, 1), atol=0.0)
+
+
+def test_funnel_hessian_obeys_its_scaling_congruence():
+    """A(T_c z) = D_c A(z) D_c exactly, for the funnel's own scaling map.
+
+    This is the identity Sec. 4.12's whole argument rests on -- moving along
+    the funnel's spine is the same as rescaling a metric's x block -- so it is
+    asserted to machine precision rather than plotted.
+    """
+    f = NealsFunnel(dim=7, sigma_v=3.0)
+    rng = np.random.default_rng(12)
+    z = f.sample(8, rng)
+    for c in (-2.5, -0.4, 0.0, 1.7, 4.0):
+        shifted = np.column_stack([z[:, 0] + c, np.exp(0.5 * c) * z[:, 1:]])
+        D = np.diag([1.0] + [np.exp(-0.5 * c)] * (f.dim - 1))
+        lhs = -f.hess_logpdf(shifted)
+        rhs = D @ (-f.hess_logpdf(z)) @ D
+        assert np.allclose(lhs, rhs, rtol=1e-12, atol=1e-12)
+
+
+def test_funnel_is_not_log_concave_where_it_lives():
+    """-H is positive definite iff e^{-v}||x||^2 < 2/sigma_v^2, and it isn't.
+
+    Both halves: the Schur-complement criterion agrees with a direct eigenvalue
+    test, and essentially no draw from the funnel satisfies it. The second half
+    is what forces ``whitened_abs_condition_numbers`` to exist.
+    """
+    f = NealsFunnel(dim=10, sigma_v=3.0)
+    z = f.sample(20_000, np.random.default_rng(13))
+    A = -f.hess_logpdf(z)
+    pd = np.linalg.eigvalsh(A)[:, 0] > 0.0
+    criterion = np.exp(-z[:, 0]) * np.sum(z[:, 1:] ** 2, axis=1) < 2.0 / f.sigma_v**2
+    assert np.array_equal(pd, criterion)
+    assert pd.mean() < 1e-3          # measured: 0 of 20k at these settings
+
+
+def test_funnel_moments_are_diagonal_and_match_the_sampler():
+    """The exact covariance, against a large exact-sampler estimate.
+
+sigma_v = 1.2 rather than the default 3 for a reason that is itself part
+    of the result: Var(x_i^2) = 3 e^{2 sigma_v^2}, so at sigma_v = 3 even a
+    million exact draws estimate Var(x_i) only to 5%, 33%, 9% at three seeds.
+    A sharp check of the *formula* needs a setting where Monte Carlo error is
+    small; the slow-estimator fact gets its own assertion below.
+    """
+    f = NealsFunnel(dim=5, sigma_v=1.2)
+    mean, cov = f.moments()
+    assert np.allclose(cov, np.diag(np.diag(cov)), atol=0.0)     # exactly diagonal
+    assert cov[0, 0] == pytest.approx(1.2**2)
+    assert cov[1, 1] == pytest.approx(np.exp(0.5 * 1.2**2))
+    z = f.sample(400_000, np.random.default_rng(14))
+    assert np.allclose(z.mean(axis=0), mean, atol=0.05)
+    emp = np.cov(z, rowvar=False)
+    assert np.allclose(np.diag(emp), np.diag(cov), rtol=0.03)
+    off = emp[np.triu_indices(f.dim, 1)]
+    assert np.abs(off).max() < 0.05
+
+
+def test_funnel_covariance_estimator_is_dominated_by_its_largest_draw():
+    """Why an estimated dense metric for the funnel is noise, quantified.
+
+    At sigma_v = 3 the sample variance of x_i inherits a variance of
+    3 e^{18}, so a warmup-length window's answer is set by its single largest
+    e^v. Two consequences, both measured across 40 independent 1000-draw
+    windows at each of three seeds:
+
+    - the spread between the largest and smallest window estimate ran 9.9x,
+      51.4x and 54.1x -- itself that variable, so the assertion is the weakest
+      of the three and the point is the order of magnitude, not the number;
+    - the *median* window estimate ran 55.9, 56.7, 58.4 against a true
+      e^{4.5} = 90.0. A typical window underestimates by ~1.6x, because the
+      mean it is estimating lives in draws most windows do not contain. The
+      bias is downward and it does not shrink with a smaller tolerance.
+    """
+    f = NealsFunnel(dim=10, sigma_v=3.0)
+    truth = np.exp(0.5 * 3.0**2)
+    for seed in (15, 16, 17):
+        rng = np.random.default_rng(seed)
+        ests, drop_ratio = [], []
+        for _ in range(40):
+            z = f.sample(1_000, rng)
+            s = z[:, 1] ** 2
+            ests.append(s.mean())
+            drop_ratio.append(np.sort(s)[:-1].mean() / s.mean())
+        assert max(ests) / min(ests) > 8.0
+        assert np.median(ests) < 0.75 * truth       # measured 0.62-0.65x
+        assert min(drop_ratio) < 0.7   # one draw carries >30% of some estimate

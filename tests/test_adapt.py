@@ -19,9 +19,11 @@ import pytest
 
 from mcmc.adapt import (
     WindowMoments,
+    definite_fraction,
     estimate_covariance,
     ledoit_wolf,
     stan_shrink,
+    whitened_abs_condition_numbers,
     whitened_condition_number,
     whitened_condition_numbers,
 )
@@ -380,3 +382,44 @@ def test_whitened_condition_numbers_reports_a_saddle_as_infinite():
     assert k[0] == 4.0
     assert np.isinf(k[1])
     assert np.isinf(k[2])
+
+
+def test_abs_condition_numbers_agree_with_kappa_when_A_is_definite():
+    """The indefinite-tolerant version must not be a different measurement.
+
+    On a positive definite A every eigenvalue already equals its magnitude, so
+    the two functions have to agree to the last bit, at any metric.
+    """
+    rng = np.random.default_rng(4)
+    for _ in range(6):
+        B = rng.standard_normal((5, 5))
+        A = B @ B.T + 0.5 * np.eye(5)
+        C = rng.standard_normal((5, 5))
+        inv_mass = C @ C.T + np.eye(5)
+        assert whitened_abs_condition_numbers(inv_mass, A) == pytest.approx(
+            whitened_condition_numbers(inv_mass, A), rel=1e-12
+        )
+
+
+def test_abs_condition_numbers_stay_finite_on_a_saddle():
+    """Where kappa refuses (inf), this reports the magnitude ratio."""
+    A = np.diag([4.0, -1.0])
+    assert np.isinf(whitened_condition_numbers(np.eye(2), A)[0])
+    assert whitened_abs_condition_numbers(np.eye(2), A)[0] == pytest.approx(4.0)
+
+
+def test_definite_fraction_is_metric_invariant():
+    """Sylvester's law: a congruence by any nonsingular L preserves inertia.
+
+    So no positive definite mass matrix can change how many draws are saddles,
+    which is why that fraction is reported once rather than per metric.
+    """
+    rng = np.random.default_rng(5)
+    A = np.stack([np.diag(rng.standard_normal(4)) for _ in range(50)])
+    base = definite_fraction(A)
+    assert 0.0 < base < 1.0
+    for _ in range(4):
+        C = rng.standard_normal((4, 4))
+        M = C @ C.T + np.eye(4)
+        L = np.linalg.cholesky(M)
+        assert definite_fraction(np.einsum("ji,njk,kl->nil", L, A, L)) == base

@@ -307,3 +307,61 @@ def whitened_condition_numbers(
     pd = w[:, 0] > 0.0
     out[pd] = w[pd, -1] / w[pd, 0]
     return out
+
+
+def whitened_abs_condition_numbers(
+    inv_mass: np.ndarray, precision: np.ndarray
+) -> np.ndarray:
+    """``max|lambda| / min|lambda|`` of the whitened Hessian, for indefinite ``A``.
+
+    ``whitened_condition_numbers`` returns ``inf`` when ``A`` is not positive
+    definite, which is the right refusal on a target that is log-concave almost
+    everywhere: an occasional saddle is news (eight schools: 2% of draws), and
+    reporting a negative ratio for it would bury the news. Neal's funnel is the
+    other regime. Its ``-H`` is positive definite only where
+    ``e^{-v} ||x||^2 < 2/sigma_v^2``, which a draw from the funnel satisfies
+    with probability ``P(chi^2_{d-1} < 0.22)`` -- about one draw in ten million
+    at the default settings (``mcmc/targets.py``). An all-``inf`` column is a
+    true statement that measures nothing, so this reports the ratio of the
+    largest to the smallest curvature *magnitude* instead.
+
+    That is the quantity leapfrog stability and mixing actually respond to. The
+    integrator's step size is capped by the fastest oscillation, ``|lambda|_max``
+    (Sec. 4.3), and the slowest direction sets the trajectory length needed to
+    cross it; neither cares about the sign, which controls whether a direction
+    oscillates or diverges, not how fast. What is lost is exactly what the
+    ``inf`` was reporting -- that a positive-definite metric cannot make an
+    indefinite ``A`` well-behaved in the sense a Gaussian is -- so the fraction
+    of non-definite draws must be reported alongside this, and
+    ``experiments/funnel_metric.py`` does.
+
+    On a positive definite ``A`` the two functions agree identically (all
+    eigenvalues are already positive), which is how ``tests/test_adapt.py``
+    pins this one to the one that was already trusted.
+    """
+    inv_mass = np.asarray(inv_mass, dtype=float)
+    if inv_mass.ndim == 1:
+        inv_mass = np.diag(inv_mass)
+    A = np.asarray(precision, dtype=float)
+    if A.ndim == 2:
+        A = A[None, :, :]
+    L = np.linalg.cholesky(0.5 * (inv_mass + inv_mass.T))
+    w = np.abs(np.linalg.eigvalsh(np.einsum("ji,njk,kl->nil", L, A, L)))
+    w = np.sort(w, axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return w[:, -1] / w[:, 0]
+
+
+def definite_fraction(precision: np.ndarray) -> float:
+    """Fraction of a stack of ``A`` matrices that is positive definite.
+
+    The companion number to ``whitened_abs_condition_numbers``: taking absolute
+    eigenvalues hides indefiniteness, so the reporting code has to say how much
+    of it there was. Metric-free by construction -- a congruence
+    ``L^T A L`` with ``L`` nonsingular preserves inertia (Sylvester), so no
+    choice of positive definite mass matrix changes this number at all.
+    """
+    A = np.asarray(precision, dtype=float)
+    if A.ndim == 2:
+        A = A[None, :, :]
+    return float(np.mean(np.linalg.eigvalsh(0.5 * (A + A.transpose(0, 2, 1)))[:, 0] > 0.0))
