@@ -74,14 +74,15 @@ step "14. SGHMC: friction, closed form, and cost vs SGLD"          experiments/s
 step "15. heavy tails: the estimand, the interval, and the sampler" experiments/heavy_tails.py
 step "16. dense metric from warmup: shrinkage, and its loss"        experiments/dense_metric_estimation.py
 step "17. eight schools: dense metric vs diagonal"                 experiments/eight_schools_metric.py
+step "18. the funnel: where the dense metric fails too"           experiments/funnel_metric.py
 
 # emcee is an optional [bench] extra: the external comparison is the only thing
 # in the repo that needs it, and CI deliberately runs without it.
 if "$PY" -c "import emcee" >/dev/null 2>&1; then
-    step "18. external benchmark vs emcee" experiments/external_benchmark.py
+    step "19. external benchmark vs emcee" experiments/external_benchmark.py
 else
     echo
-    echo ">>> SKIPPED: 18. external benchmark vs emcee (emcee not installed)"
+    echo ">>> SKIPPED: 19. external benchmark vs emcee (emcee not installed)"
     echo "    pip install -r requirements.txt   # or: pip install -e '.[bench]'"
 fi
 

@@ -1,5 +1,7 @@
 """Targets must have correct log-densities and hand-derived gradients."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -338,3 +340,22 @@ def test_funnel_neck_step_size_collapses_like_exp_half_v_at_any_metric():
         law = (e / e[0]) / np.exp((vs - vs[0]) / 2.0)
         assert np.allclose(law, 1.0, rtol=0.03)
         assert law[1] == pytest.approx(1.0, rel=3e-3)   # v = -7
+
+
+def test_funnel_logpdf_is_silent_on_a_divergent_state():
+    """A blown-up x must give -inf quietly, not a RuntimeWarning.
+
+    The class already documents that overflow here is the correct outcome --
+    the state is rejected by the Metropolis step -- and silences it, but the
+    ``sum(x*x)`` that overflows *first*, before e^{-v} multiplies anything, sat
+    outside the errstate block. Found when experiments/funnel_metric.py printed
+    the warning above its own output.
+    """
+    f = NealsFunnel(dim=4, sigma_v=3.0)
+    z = np.array([[0.0, 1e200, 1e200, 1e200]])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        val = f.logpdf(z)
+        f.grad_logpdf(z)
+        f.hess_logpdf(z)
+    assert np.isneginf(val[0])

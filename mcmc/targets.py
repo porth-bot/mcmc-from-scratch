@@ -169,9 +169,11 @@ class NealsFunnel:
     def logpdf(self, z: np.ndarray) -> np.ndarray:
         z = np.atleast_2d(z)
         v, x = z[:, 0], z[:, 1:]
-        sumsq = np.sum(x * x, axis=1)
         k = self.dim - 1
         with np.errstate(over="ignore", invalid="ignore"):
+            # inside the errstate: x itself overflows on a divergent
+            # trajectory, before e^{-v} ever multiplies it
+            sumsq = np.sum(x * x, axis=1)
             return (
                 -0.5 * v**2 / self.sigma_v**2
                 - 0.5 * k * v
