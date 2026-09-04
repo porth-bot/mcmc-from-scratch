@@ -272,10 +272,38 @@ def whitened_condition_number(inv_mass: np.ndarray, cov: np.ndarray) -> float:
 
     ``inv_mass`` may be a (d,) diagonal or a (d, d) matrix.
     """
+    A = np.linalg.inv(np.asarray(cov, dtype=float))
+    return float(whitened_condition_numbers(inv_mass, A)[0])
+
+
+def whitened_condition_numbers(
+    inv_mass: np.ndarray, precision: np.ndarray
+) -> np.ndarray:
+    """``kappa`` of the whitened Hessian, given the Hessian rather than a covariance.
+
+    Same quantity as ``whitened_condition_number`` and the same factorization,
+    but taking ``A`` directly and taking a *stack* of them: for a non-Gaussian
+    target the curvature is a different matrix at every point, so the thing to
+    look at is the distribution of ``kappa(M^-1/2 A(x) M^-1/2)`` over posterior
+    draws rather than one number
+    (``experiments/eight_schools_metric.py``). Passing ``A`` avoids inverting a
+    covariance that was itself obtained by inverting a Hessian.
+
+    ``precision`` is ``(d, d)`` or ``(n, d, d)``; the return is a ``(n,)``
+    array either way. Entries whose ``A`` is not positive definite -- which a
+    non-log-concave target produces, and which is itself worth counting -- come
+    back as ``inf``, because a metric cannot condition a saddle and silently
+    returning a negative ratio would hide that.
+    """
     inv_mass = np.asarray(inv_mass, dtype=float)
     if inv_mass.ndim == 1:
         inv_mass = np.diag(inv_mass)
-    A = np.linalg.inv(np.asarray(cov, dtype=float))
+    A = np.asarray(precision, dtype=float)
+    if A.ndim == 2:
+        A = A[None, :, :]
     L = np.linalg.cholesky(0.5 * (inv_mass + inv_mass.T))
-    w = np.linalg.eigvalsh(L.T @ A @ L)
-    return float(w.max() / w.min())
+    w = np.linalg.eigvalsh(np.einsum("ji,njk,kl->nil", L, A, L))
+    out = np.full(w.shape[0], np.inf)
+    pd = w[:, 0] > 0.0
+    out[pd] = w[pd, -1] / w[pd, 0]
+    return out

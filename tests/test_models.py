@@ -9,7 +9,7 @@ from mcmc.models import (
     EightSchoolsNonCentered,
     make_eight_schools_gibbs_updates,
 )
-from mcmc.targets import finite_difference_grad
+from mcmc.targets import finite_difference_grad, finite_difference_hess
 
 
 def make_linreg(rng):
@@ -57,6 +57,45 @@ def test_eight_schools_gradient_matches_finite_differences():
         rtol=1e-5,
         atol=1e-6,
     )
+
+
+def test_eight_schools_hessian_matches_finite_differences():
+    """The Hessian is hand-derived from the hand-derived gradient, so nothing
+    upstream would catch a slip in it: the log-tau row carries an e^t and an
+    e^{2t} term of opposite sign, and the eta block's 1 + tau^2/sigma_j^2 is
+    the entry the metric study reads. Checked at a spread of log tau, since
+    every error term in the derivation is a function of it."""
+    model = EightSchoolsNonCentered()
+    rng = np.random.default_rng(11)
+    z = rng.standard_normal((8, model.dim))
+    z[:, 1] = rng.uniform(-1.0, 2.0, size=8)
+    H = model.hess_logpdf(z)
+    np.testing.assert_allclose(
+        H, finite_difference_hess(model.grad_logpdf, z), rtol=2e-5, atol=2e-6
+    )
+    # symmetric exactly, not just to the finite-difference tolerance: the two
+    # off-diagonal blocks are assigned from one array each, so a typo that
+    # transposed one of them would show here and nowhere else.
+    np.testing.assert_array_equal(H, np.transpose(H, (0, 2, 1)))
+
+
+def test_eight_schools_eta_block_is_the_prior_plus_tau_over_sigma():
+    """The closed form the metric study is built on: d2L/deta_j deta_k is
+    diagonal with entries -(1 + tau^2/sigma_j^2). It is asserted separately
+    from the finite-difference check because the *shape* of this block is the
+    claim -- that the eta curvature depends on position only through tau -- and
+    a Hessian that was right to 1e-5 with a spurious eta_j eta_k coupling would
+    pass the check above and refute the section."""
+    model = EightSchoolsNonCentered()
+    rng = np.random.default_rng(12)
+    z = rng.standard_normal((5, model.dim))
+    z[:, 1] = np.linspace(-1.5, 1.5, 5)
+    block = model.hess_logpdf(z)[:, 2:, 2:]
+    tau2 = np.exp(2.0 * z[:, 1])
+    expected = -(1.0 + tau2[:, None] / model.sigma2)
+    for b, e in zip(block, expected):
+        np.testing.assert_allclose(np.diag(b), e, rtol=1e-12)
+        np.testing.assert_allclose(b - np.diag(np.diag(b)), 0.0, atol=0.0)
 
 
 def test_eight_schools_gibbs_and_hmc_agree():

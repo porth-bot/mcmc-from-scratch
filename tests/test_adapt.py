@@ -23,6 +23,7 @@ from mcmc.adapt import (
     ledoit_wolf,
     stan_shrink,
     whitened_condition_number,
+    whitened_condition_numbers,
 )
 from mcmc.hmc import hmc
 from mcmc.metric import DenseMetric
@@ -334,3 +335,48 @@ def test_hmc_rejects_a_bad_adapt_mass_and_a_double_metric():
     with pytest.raises(ValueError, match="not both"):
         hmc(target, np.zeros((2, 1)), adapt_mass="dense",
             metric=np.eye(1), **kw)
+
+
+def test_whitened_condition_numbers_agrees_with_the_scalar_version():
+    """The scalar entry point now calls the stacked one, so the two must be the
+    same number and not merely close -- every kappa in Sec. 4.11's tables was
+    computed by the pre-refactor code path."""
+    rng = np.random.default_rng(21)
+    d = 6
+    B = rng.standard_normal((d, d))
+    cov = B @ B.T + d * np.eye(d)
+    for inv_mass in (np.diag(cov), cov, np.eye(d)):
+        scalar = whitened_condition_number(inv_mass, cov)
+        stacked = whitened_condition_numbers(inv_mass, np.linalg.inv(cov))
+        assert stacked.shape == (1,)
+        assert scalar == float(stacked[0])
+
+
+def test_whitened_condition_numbers_hits_one_when_the_metric_is_the_inverse():
+    """M^-1 = A^-1 whitens exactly: kappa = 1 in every direction at once
+    (Sec. 4.10). Done per-slice on a stack, since the whole point of the
+    stacked form is that A varies from draw to draw."""
+    rng = np.random.default_rng(22)
+    d = 5
+    As = []
+    for _ in range(4):
+        B = rng.standard_normal((d, d))
+        As.append(B @ B.T + d * np.eye(d))
+    A = np.stack(As)
+    for i, Ai in enumerate(As):
+        k = whitened_condition_numbers(np.linalg.inv(Ai), A)
+        assert k.shape == (4,)
+        assert abs(k[i] - 1.0) < 1e-9
+        # the other slices are a different matrix, so they are not whitened
+        assert all(k[j] > 1.0 + 1e-6 for j in range(4) if j != i)
+
+
+def test_whitened_condition_numbers_reports_a_saddle_as_infinite():
+    """A non-log-concave target hands this function an indefinite A. Returning
+    a negative eigenvalue ratio would look like a very good metric; the
+    experiment counts these draws instead, so they have to be identifiable."""
+    A = np.stack([np.diag([1.0, 4.0]), np.diag([1.0, -4.0]), np.diag([0.0, 1.0])])
+    k = whitened_condition_numbers(np.eye(2), A)
+    assert k[0] == 4.0
+    assert np.isinf(k[1])
+    assert np.isinf(k[2])

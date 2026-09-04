@@ -159,6 +159,57 @@ class EightSchoolsNonCentered:
             g[:, 2:] = e_t[:, None] * w - eta
         return g
 
+    def hess_logpdf(self, z: np.ndarray) -> np.ndarray:
+        """Hessian of the log posterior, ``(batch, J+2, J+2)``, hand-derived.
+
+        Differentiating the gradient above once more, with r_j = y_j - mu -
+        e^t eta_j, s_j = sigma_j^2, and dr_j/dmu = -1, dr_j/dt = -e^t eta_j,
+        dr_j/deta_j = -e^t:
+
+            d2L/dmu2       = -sum_j 1/s_j
+            d2L/dmu dt     = -e^t sum_j eta_j / s_j
+            d2L/dmu deta_j = -e^t / s_j
+            d2L/dt2        = e^t sum_j r_j eta_j / s_j
+                             - e^{2t} sum_j eta_j^2 / s_j - 4 b e^{-2t}
+            d2L/dt deta_j  = e^t r_j / s_j - e^{2t} eta_j / s_j
+            d2L/deta_j deta_k = -delta_jk (1 + e^{2t} / s_j)
+
+        The last line is the one worth reading: the eta block is *diagonal*
+        with entries 1 + tau^2/sigma_j^2, so its curvature depends on where in
+        the posterior it is evaluated. That position dependence -- not any
+        rotation -- is what no single global mass matrix can absorb, and
+        ``experiments/eight_schools_metric.py`` measures how much of it there
+        is. Checked against ``finite_difference_hess`` in tests.
+
+        This is a *dense* (J+2, J+2) per draw and is meant for diagnostics on a
+        thinned sample, not for anything inside a trajectory.
+        """
+        z = np.atleast_2d(z)
+        n, d = z.shape
+        mu, t, eta = self._split(z)
+        with np.errstate(over="ignore", invalid="ignore"):
+            e_t = np.exp(t)
+            r = self.y - mu[:, None] - e_t[:, None] * eta
+            w = 1.0 / self.sigma2
+            H = np.zeros((n, d, d))
+            H[:, 0, 0] = -np.sum(w)
+            mu_t = -e_t * np.sum(w * eta, axis=1)
+            H[:, 0, 1] = H[:, 1, 0] = mu_t
+            mu_eta = -e_t[:, None] * w
+            H[:, 0, 2:] = mu_eta
+            H[:, 2:, 0] = mu_eta
+            H[:, 1, 1] = (
+                e_t * np.sum(r * eta * w, axis=1)
+                - e_t**2 * np.sum(eta**2 * w, axis=1)
+                - 4.0 * self.b * np.exp(-2.0 * t)
+            )
+            t_eta = e_t[:, None] * r * w - (e_t**2)[:, None] * eta * w
+            H[:, 1, 2:] = t_eta
+            H[:, 2:, 1] = t_eta
+            j = np.arange(self.n_schools) + 2
+            H[:, j, j] = -((e_t**2)[:, None] * w + 1.0)
+        return H
+
     def transform(self, z: np.ndarray) -> dict[str, np.ndarray]:
         """Map unconstrained draws to interpretable parameters.
 

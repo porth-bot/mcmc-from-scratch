@@ -372,3 +372,30 @@ def finite_difference_grad(
         dx[:, i] = eps
         g[:, i] = (logpdf(x + dx) - logpdf(x - dx)) / (2.0 * eps)
     return g
+
+
+def finite_difference_hess(
+    grad_logpdf: Callable[[np.ndarray], np.ndarray], x: np.ndarray, eps: float = 1e-5
+) -> np.ndarray:
+    """Central-difference Hessian of a batched logpdf, from its gradient.
+
+    Differences the *gradient* rather than the log density: a second difference
+    of the density loses another factor of eps to cancellation, so checking a
+    Hessian against ``finite_difference_grad``-style second differences would
+    be measuring roundoff. Differencing an exact gradient keeps the same
+    O(eps^2) truncation and the same ~1e-9 floor, one derivative up.
+
+    ``eps`` is larger than the gradient checker's for the same reason it is
+    there: the balance point moves with the magnitude of the derivative being
+    approximated. Returns ``(batch, dim, dim)``; the result is *not*
+    symmetrized, so a check against it also checks that the analytic Hessian
+    is symmetric for the right reason.
+    """
+    x = np.atleast_2d(x)
+    n, d = x.shape
+    H = np.empty((n, d, d))
+    for i in range(d):
+        dx = np.zeros_like(x)
+        dx[:, i] = eps
+        H[:, :, i] = (grad_logpdf(x + dx) - grad_logpdf(x - dx)) / (2.0 * eps)
+    return H
