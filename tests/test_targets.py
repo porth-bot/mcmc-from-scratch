@@ -284,3 +284,57 @@ def test_funnel_covariance_estimator_is_dominated_by_its_largest_draw():
         assert max(ests) / min(ests) > 8.0
         assert np.median(ests) < 0.75 * truth       # measured 0.62-0.65x
         assert min(drop_ratio) < 0.7   # one draw carries >30% of some estimate
+
+
+def _max_step(f, z, inv_mass):
+    """Largest stable leapfrog step at z under metric M^-1 = inv_mass."""
+    L = np.linalg.cholesky(inv_mass)
+    A = -f.hess_logpdf(np.atleast_2d(z))[0]
+    return 2.0 / np.sqrt(np.abs(np.linalg.eigvalsh(L.T @ A @ L)).max())
+
+
+def test_funnel_step_size_limit_transfers_to_the_metric_exactly():
+    """eps_max(T_c z; Sigma) = eps_max(z; D_c Sigma D_c), Sec. 4.12.
+
+    The integrator form of the congruence: moving up the funnel's spine and
+    rescaling the metric's x block are the *same* operation, so every metric
+    faces one one-parameter family of problems and differs only in where along
+    it it sits. Checked at the identity, the exact covariance, and a random
+    dense metric, since a claim quantified over all Sigma should not be tested
+    at one.
+    """
+    f = NealsFunnel(dim=10, sigma_v=3.0)
+    rng = np.random.default_rng(21)
+    z = f.sample(1, rng)[0]
+    C = rng.standard_normal((10, 10))
+    metrics = [np.eye(10), f.moments()[1], C @ C.T + np.eye(10)]
+    for S in metrics:
+        for c in (-6.0, -2.0, 0.0, 3.0, 7.0):
+            shifted = np.concatenate([[z[0] + c], np.exp(0.5 * c) * z[1:]])
+            D = np.diag([1.0] + [np.exp(-0.5 * c)] * 9)
+            assert _max_step(f, shifted, S) == pytest.approx(
+                _max_step(f, z, D @ S @ D), rel=1e-12
+            )
+
+
+def test_funnel_neck_step_size_collapses_like_exp_half_v_at_any_metric():
+    """In the neck eps_max(v) ~ e^{v/2}, with the metric setting only the constant.
+
+    Measured, not assumed: the deviation from the e^{(v2-v1)/2} law is under 3%
+    from v = -9 down through v = -5 and under 0.3% below v = -7, at all three
+    metrics. That is the sense in which no global metric fixes the funnel -- it
+    slides the curve, it does not flatten it.
+    """
+    f = NealsFunnel(dim=10, sigma_v=3.0)
+    rng = np.random.default_rng(22)
+    z = f.sample(1, rng)[0]
+    C = rng.standard_normal((10, 10))
+    vs = np.array([-9.0, -7.0, -5.0])
+    for S in (np.eye(10), f.moments()[1], C @ C.T + np.eye(10)):
+        e = np.array([
+            _max_step(f, np.concatenate([[z[0] + c], np.exp(0.5 * c) * z[1:]]), S)
+            for c in vs
+        ])
+        law = (e / e[0]) / np.exp((vs - vs[0]) / 2.0)
+        assert np.allclose(law, 1.0, rtol=0.03)
+        assert law[1] == pytest.approx(1.0, rel=3e-3)   # v = -7

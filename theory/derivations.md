@@ -681,6 +681,127 @@ schools, where Sec. 4.9 measured $14.8\times$ on $\eta_1$ against $2.4\times$
 on $\log\tau$ with a diagonal metric, and where the open question is whether
 $\kappa(R)$ was the binding constraint.
 
+### 4.12 The funnel: where the dense metric fails too, and why in closed form
+
+Sec. 4.11 ends by pointing at eight schools, and
+`experiments/eight_schools_metric.py` answers there: the dense metric buys
+$1.06\times$ on the binding coordinate, because the residual is
+position-dependent curvature and not a rotation. That is a *measured* null on
+one posterior. Neal's funnel turns the same null into an identity, because
+every quantity in the argument is available in closed form.
+
+**The rotation available is exactly zero.** From the generative form
+$v \sim N(0, \sigma_v^2)$, $x_i \mid v \sim N(0, e^v)$, the tower rule gives
+
+$$\operatorname{Cov}(v, x_i) = E\!\left[v\, E[x_i \mid v]\right] = 0, \qquad
+\operatorname{Cov}(x_i, x_j) = E\!\left[E[x_i \mid v]\, E[x_j \mid v]\right] = 0
+\ \ (i \neq j),$$
+
+$$\Sigma = \operatorname{diag}\!\left(\sigma_v^2,\ e^{\sigma_v^2/2},\ \dots,\
+e^{\sigma_v^2/2}\right), \qquad R = I.$$
+
+Sec. 4.10's closed form then applies with nothing left to estimate: the best
+possible diagonal metric leaves $\kappa(R) = 1$, which is what the exact dense
+metric leaves. The dense metric's algebraic headroom over the diagonal is
+$1.00$, exactly, by the symmetry of the target rather than by a small number
+coming back from a reference run. On eight schools that headroom was $1.42$ and
+had to be measured; here it is a theorem.
+
+**A single warmup estimate cannot even find that diagonal.**
+$\operatorname{Var}(x_i^2) = 3e^{2\sigma_v^2} - e^{\sigma_v^2}$, which is
+$e^{18} \approx 6.6\times 10^7$ at $\sigma_v = 3$: the second moment of $x_i$
+is carried by the rare draws with large $e^v$, so a warmup window's sample
+variance is set by its single largest draw. Measured over 40 independent
+$1000$-draw windows, the estimates spread $10$–$54\times$ and their median is
+$56$–$58$ against a true $e^{4.5} = 90.0$ (`tests/test_targets.py`). So the
+estimated dense metric here is a diagonal it gets wrong by a factor, plus
+off-diagonal entries that are pure noise around an exact zero — noise that can
+only rotate a target with nothing to rotate.
+
+**The curvature, and where it is not.** Differentiating the gradient once more,
+with $s = \sum_i x_i^2$ and $A = -H$ the local precision,
+
+$$A(v, x) = \begin{pmatrix} \sigma_v^{-2} + \tfrac12 e^{-v} s & -e^{-v} x^\top \\
+-e^{-v} x & e^{-v} I \end{pmatrix}.$$
+
+Its Schur complement on the $x$ block is
+$\sigma_v^{-2} + \tfrac12 e^{-v}s - e^{-v}s = \sigma_v^{-2} - \tfrac12 e^{-v}s$,
+so $A \succ 0$ iff $e^{-v}s < 2/\sigma_v^2$. At a draw from the funnel
+$x_i = e^{v/2} z_i$ with $z \sim N(0, I)$, so $e^{-v}s$ is *exactly*
+$\chi^2_{d-1}$ — mean $d-1 = 9$, required to fall below $2/\sigma_v^2 = 0.22$.
+The funnel is not log-concave anywhere a sampler goes: 0 of 20 000 draws, where
+eight schools had 2%. Sylvester's law of inertia makes this metric-free — a
+congruence $L^\top A L$ by a nonsingular $L$ preserves signs — so no positive
+definite mass matrix changes it at all, which is why the experiment reports the
+fraction once rather than per metric, and why $\kappa$ has to be read off
+$|\lambda|$ here (`mcmc/adapt.py`).
+
+**Why no global metric helps, exactly.** The funnel has a scaling symmetry:
+under $T_c(v, x) = (v + c,\ e^{c/2} x)$ the combination $e^{-v}s$ is invariant
+and each block of $A$ picks up a fixed power of $e^{c/2}$,
+
+$$A(T_c z) = D_c\, A(z)\, D_c, \qquad
+D_c = \operatorname{diag}\!\left(1, e^{-c/2}, \dots, e^{-c/2}\right).$$
+
+A congruence by a constant diagonal is precisely what a global metric does:
+whitening by $M^{-1} = \Sigma_M$ replaces $A$ with $\Sigma_M^{1/2} A
+\Sigma_M^{1/2}$. So *using metric $\Sigma_M$ at $T_c z$ is the same problem as
+using metric $D_c \Sigma_M D_c$ at $z$*. Sliding along the funnel's spine and
+rescaling the metric are the same operation, and the two cancel only for one
+$c$. Concretely, the $x$-block scale a metric would have to carry to whiten $A$
+at height $v$ is $e^{v}$; over the central 99% of the $v$-marginal,
+$v \in \pm 2.576\,\sigma_v = \pm 7.73$, that is a range of $e^{15.5} \approx
+5\times 10^6$. A global metric multiplies every one of those requirements by
+the same constant, so it can slide the range but never shrink it. The dense
+metric has one more degree of freedom than the diagonal — a rotation — and the
+target's off-diagonals are exactly zero, so it has nothing to spend it on.
+
+The same statement in the integrator. Leapfrog on a direction of whitened
+curvature $\lambda$ is stable iff $\varepsilon\sqrt{\lambda} < 2$
+(Sec. 4.3), so write
+$\varepsilon_{\max}(z; \Sigma_M) = 2/\sqrt{\lambda_{\max}
+(\Sigma_M^{1/2} A(z) \Sigma_M^{1/2})}$ for the largest step the metric admits
+at $z$. The congruence above transfers exactly:
+
+$$\varepsilon_{\max}(T_c z;\ \Sigma_M)
+= \varepsilon_{\max}(z;\ D_c \Sigma_M D_c) \qquad \text{for every }
+\Sigma_M \text{ and every } c,$$
+
+which is asserted to machine precision in `tests/test_targets.py`. Every metric
+faces the same one-parameter family of problems; they differ only in where
+along it they sit.
+
+In the neck, where the $x$ block binds, that family has an explicit form:
+$\lambda_{\max} \approx e^{-v}\lambda_{\max}(\Sigma_{xx})$ gives
+$\varepsilon_{\max}(v) \approx 2e^{v/2}/\sqrt{\lambda_{\max}(\Sigma_{xx})}$,
+so the *ratio* between two heights is $e^{(v_2-v_1)/2}$ and the metric sets only
+the constant in front. Measured against three metrics — identity, the exact
+$\Sigma$, a random dense one — that law holds to 3% down to $v = -5$ and to
+0.3% below $v = -7$.
+
+It fails in the *mouth*, and the reason is worth stating rather than hiding:
+as $v$ grows the $x$ directions flatten and the binding constraint passes to
+$v$ itself, whose curvature $\sigma_v^{-2} + \tfrac12 e^{-v}s$ is invariant
+along the orbit, so $\varepsilon_{\max}$ saturates instead of growing without
+bound. That rescues nothing. It says the mouth was never the hard end; the
+$e^{v/2}$ collapse in the neck is the whole problem, and no choice of
+$\Sigma_M$ shifts it, because shifting $\Sigma_M$ is the same as moving along
+the orbit.
+
+**What does work, and it is not a metric.** Two fixes exist and they are the
+same fix. The non-centered parameterization $x_i = e^{v/2} z_i$ (Sec. 4.6)
+makes the target exactly $N(0, \operatorname{diag}(\sigma_v^2, 1, \dots, 1))$,
+where the identity metric is optimal — and `experiments/funnel.py` measures it
+mixing essentially perfectly. Riemannian HMC (Girolami and Calderhead, 2011)
+does it without needing the change of variables to be found by hand: it carries
+a position-dependent $M(z)$, typically built from $A(z)$ itself, so the
+whitening is redone at every point and the $e^{v}$ span is absorbed by
+construction. The price is a non-separable Hamiltonian, hence an implicit
+generalized leapfrog with fixed-point iterations at each step, and a metric
+that must be positive definite where $A$ is not — SoftAbs exists for exactly
+the indefiniteness measured above. Neither is implemented here; both are the
+honest answer to the limitation `experiments/funnel_metric.py` measures.
+
 ## 5. The models
 
 ### 5.1 Conjugate Bayesian linear regression
