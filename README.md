@@ -1086,6 +1086,12 @@ therefore the ESS and R-hat tables, are identical. The one file that differs is
 machine; the ESS-per-gradient columns next to it are the portable ones. Timing
 numbers in this README are from a 2020s laptop CPU.
 
+`reproduce.sh` ends by checking that against `git status` rather than asking
+this paragraph to be believed, and names any *other* figure that changed. The
+check is worth having because the same claim was false in `gp-from-scratch`
+when it was written there: two figures had been shipping an older
+environment's bytes, and nothing noticed because nothing was looking.
+
 To run a single experiment instead:
 
 ```bash

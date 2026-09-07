@@ -91,3 +91,44 @@ echo "=================================================================="
 echo "done in $((SECONDS - started))s. figures/:"
 ls -1 figures/
 echo "=================================================================="
+
+# Check the reproduction claim rather than restating it. Everything above was
+# recomputed from seeded NumPy, so a figure that now differs from its committed
+# copy is either the one file the README says will differ -- vectorized_scaling,
+# which plots wall-clock per step and therefore measures the machine -- or real
+# drift between the code and what the repo ships. gp-from-scratch has carried
+# this check since a fresh clone found two of its figures sitting stale; the
+# same claim is made here, so the same check belongs here.
+TIMING_FIGURES="figures/vectorized_scaling.png"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # Only worktree-vs-index differences count as drift. The porcelain format is
+    # XY<space>path, X the index status and Y the worktree's, so a figure that is
+    # merely newly staged reads "A  path" and is not drift. Untracked ("??") ones
+    # do count: a PNG the experiments write but nobody committed is exactly the
+    # stale-figure problem seen from the other side.
+    changed=$(git status --porcelain -- figures/ \
+        | awk '{ y = substr($0, 2, 1); if (y == "M" || substr($0,1,2) == "??") print $2 }')
+    unexpected=""
+    for f in ${changed}; do
+        case " ${TIMING_FIGURES} " in
+            *" ${f} "*) ;;
+            *) unexpected="${unexpected} ${f}" ;;
+        esac
+    done
+    echo
+    if [ -z "${changed}" ]; then
+        echo "reproduction: all 26 committed figures came back byte-for-byte."
+        echo "(Even the wall-clock plot landed on identical bytes here.)"
+    elif [ -z "${unexpected}" ]; then
+        echo "reproduction: byte-for-byte except the wall-clock plot, as documented:"
+        for f in ${changed}; do echo "    ${f}   (plots seconds; machine-dependent)"; done
+    else
+        echo "reproduction: UNEXPECTED drift -- these differ from the committed"
+        echo "copies and do not plot wall-clock, so the repo is shipping figures"
+        echo "its own seeded code no longer produces. Inspect, then commit the"
+        echo "regenerated files:"
+        for f in ${unexpected}; do echo "    ${f}"; done
+        echo "(${TIMING_FIGURES} may also differ; that one is expected to.)"
+    fi
+    echo "=================================================================="
+fi
