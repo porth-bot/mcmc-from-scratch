@@ -13,7 +13,7 @@ inference routes against each other.
 
 *Neal's funnel, 10D. True marginal: $v \sim N(0, 3^2)$. A random walk never
 reaches the neck (sd$[v]$ = 2.22), gradient-guided HMC gets closer but
-diverges in the neck (sd = 2.60, 6% divergent), and reparameterizing the
+diverges in the neck (sd = 2.59, 6% divergent), and reparameterizing the
 geometry solves the problem outright (sd = 2.99, zero divergences). Fixing
 the geometry beats tuning the sampler.*
 
@@ -99,7 +99,7 @@ True $v$-marginal is $N(0, 3^2)$ exactly — so bias is measurable:
 | sampler | draws | E$[v]$ (true 0) | sd$[v]$ (true 3) | $\tau(v)$ | ESS$(v)$ | $\hat R(v)$ | divergent |
 |---|---|---|---|---|---|---|---|
 | RWMH | 400k | 0.53 | 2.22 | 2361 | 169 | 1.04 | — |
-| HMC (centered) | 100k | 0.49 | 2.60 | 190 | 528 | 1.02 | 5 998 |
+| HMC (centered) | 100k | 0.49 | 2.59 | 190 | 528 | 1.02 | 5 998 |
 | HMC (non-centered) | 100k | **0.02** | **2.99** | 12.5 | 8 001 | 1.000 | 0 |
 
 Two honest lessons the numbers force on you: (1) $\hat R = 1.04$ while
@@ -126,7 +126,7 @@ exists, so correctness rests on **two independent routes agreeing**:
 conjugate Gibbs on the centered parameterization vs HMC on the non-centered
 one (different parameterizations, different kernels, different code paths).
 
-Result: all 10 posterior means agree to **0.131** (posterior sds are ~4.3,
+Result: all 10 posterior means agree to **0.131** (posterior sds are 4.1 to 4.5,
 so this is within Monte Carlo error), $\hat R \le 1.002$ everywhere. HMC's
 ESS on $\mu$ is 63k from 80k draws vs Gibbs's 1.5k from 160k — the centered
 Gibbs chain suffers exactly the $\mu$–$\theta$ coupling that non-centering
@@ -1127,9 +1127,13 @@ package or the tests (CI installs numpy + pytest only). Install it with
 `pip install emcee` or `pip install -e '.[bench]'`.
 
 Figures land in `figures/`; every table above is printed by the scripts.
+§§1 to 4 also write the numbers they quote to `logs/`, and
+`tests/test_readme_numbers.py` checks those sections' tables and prose against
+them; the other sections are listed in that file as not yet instrumented.
 Seeds are fixed (`SEED = 20260703`; the two metric studies carry their own,
 written at the top of each script). There is nothing to download and no cached
-state to warm up: the "log" this repo replays from is the seed plus the code.
+state to warm up: the logs are outputs, not inputs, and a rerun regenerates
+them byte-for-byte.
 
 ## Design notes
 
