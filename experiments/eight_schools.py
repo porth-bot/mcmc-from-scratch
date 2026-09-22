@@ -22,7 +22,7 @@ Run:  python experiments/eight_schools.py
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.diagnostics import ess, split_rhat
 from mcmc.gibbs import gibbs
 from mcmc.hmc import hmc
@@ -64,7 +64,12 @@ def run_hmc(rng):
         f"HMC: accept={res.accept_rate.mean():.3f}, "
         f"step={res.extras['step_size']:.3f}, divergent={res.extras['n_divergent']}"
     )
-    return EightSchoolsNonCentered().transform(res.samples)
+    stats = {
+        "accept": float(res.accept_rate.mean()),
+        "step_size": res.extras["step_size"],
+        "n_divergent": res.extras["n_divergent"],
+    }
+    return EightSchoolsNonCentered().transform(res.samples), stats
 
 
 def table(params, label):
@@ -92,7 +97,7 @@ def main():
     print("=" * 66)
     rng = np.random.default_rng(SEED)
     g = run_gibbs(rng)
-    h = run_hmc(rng)
+    h, hmc_stats = run_hmc(rng)
     rows_g = table(g, "Gibbs, 4 x 40k draws")
     rows_h = table(h, "HMC, 4 x 20k draws")
 
@@ -100,6 +105,12 @@ def main():
         abs(a["mean"] - b["mean"]) for a, b in zip(rows_g, rows_h)
     )
     print(f"\nlargest |mean difference| across all 10 parameters: {worst:.3f}")
+    save_results("eight_schools", {
+        "seed": SEED,
+        "gibbs": {"draws": int(g["mu"].size), "rows": rows_g},
+        "hmc": {"draws": int(h["mu"].size), "rows": rows_h, **hmc_stats},
+        "max_abs_mean_diff": worst,
+    })
 
     # agreement figure: posterior of mu and tau from the two routes
     fig, axes = plt.subplots(1, 2, figsize=(8, 3.2), constrained_layout=True)

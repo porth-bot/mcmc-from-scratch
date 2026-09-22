@@ -10,7 +10,7 @@ Run:  python experiments/tempering.py
 """
 
 import numpy as np
-from common import plt, savefig
+from common import plt, save_results, savefig
 
 from mcmc.metropolis import random_walk_metropolis
 from mcmc.targets import GaussianMixture
@@ -50,6 +50,16 @@ def main():
     summarize("parallel tempering", pt_x)
     summarize("single random walk", rw_x)
     print("swap rates:", pt.extras["swap_rates"].round(2))
+    save_results("tempering", {
+        "true_mean": TARGET.mean(),
+        "true_left_frac": 0.35,
+        "betas": betas,
+        "swap_rates": pt.extras["swap_rates"],
+        "parallel_tempering": {"mean": pt_x.mean(axis=0),
+                               "left_frac": float((pt_x[:, 0] < 0).mean())},
+        "random_walk": {"mean": rw_x.mean(axis=0),
+                        "left_frac": float((rw_x[:, 0] < 0).mean())},
+    })
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), constrained_layout=True, sharex=True, sharey=True)
     for ax, title, x in [

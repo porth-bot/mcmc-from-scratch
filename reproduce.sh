@@ -7,8 +7,10 @@
 #     PYTHON=/path/to/python ./reproduce.sh
 #
 # There is nothing to download and no cached state: every sampler here is
-# NumPy and seeded, so the "committed log" for this repo is the seed plus the
-# code, and a rerun recomputes the figures rather than replaying stored ones.
+# NumPy and seeded, so a rerun recomputes the figures rather than replaying
+# stored ones. The JSON in logs/ is output, not input: experiments write the
+# numbers their README section quotes there, and the check at the bottom holds
+# them to byte-for-byte like the figures.
 # (The two torch repos in the series ship trained checkpoints instead, because
 # retraining them takes hours. Here the whole suite is minutes.)
 #
@@ -106,7 +108,11 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # merely newly staged reads "A  path" and is not drift. Untracked ("??") ones
     # do count: a PNG the experiments write but nobody committed is exactly the
     # stale-figure problem seen from the other side.
-    changed=$(git status --porcelain -- figures/ \
+    # logs/ is checked the same way: the JSON the experiments write is what
+    # tests/test_readme_numbers.py holds the README's tables against, so a log
+    # that no longer matches its committed copy means those tables are stale.
+    # None of the logs records wall-clock, so none is excused.
+    changed=$(git status --porcelain -- figures/ logs/ \
         | awk '{ y = substr($0, 2, 1); if (y == "M" || substr($0,1,2) == "??") print $2 }')
     unexpected=""
     for f in ${changed}; do
@@ -117,7 +123,8 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     done
     echo
     if [ -z "${changed}" ]; then
-        echo "reproduction: all 26 committed figures came back byte-for-byte."
+        echo "reproduction: all 26 committed figures came back byte-for-byte,"
+        echo "and so did every committed log."
         echo "(Even the wall-clock plot landed on identical bytes here.)"
     elif [ -z "${unexpected}" ]; then
         echo "reproduction: byte-for-byte except the wall-clock plot, as documented:"
@@ -125,7 +132,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     else
         echo "reproduction: UNEXPECTED drift -- these differ from the committed"
         echo "copies and do not plot wall-clock, so the repo is shipping figures"
-        echo "its own seeded code no longer produces. Inspect, then commit the"
+        echo "or logs its own seeded code no longer produces. Inspect, then commit the"
         echo "regenerated files:"
         for f in ${unexpected}; do echo "    ${f}"; done
         echo "(${TIMING_FIGURES} may also differ; that one is expected to.)"

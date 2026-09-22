@@ -19,7 +19,7 @@ Run:  python experiments/validate_exact.py
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.diagnostics import (
     ess,
     integrated_autocorr_time,
@@ -167,6 +167,7 @@ def part_b_linreg():
     ax.set_title("Sampled posterior vs closed form", loc="left")
     ax.legend(loc="upper right", fontsize=7)
     savefig(fig, "linreg_posterior.png")
+    return rows
 
 
 def part_c_rosenbrock():
@@ -235,6 +236,9 @@ def part_c_rosenbrock():
 
 
 if __name__ == "__main__":
-    part_a_gaussian()
-    part_b_linreg()
-    part_c_rosenbrock()
+    save_results("validate_exact", {
+        "seed": SEED,
+        "gaussian": part_a_gaussian(),
+        "linreg": part_b_linreg(),
+        "rosenbrock": part_c_rosenbrock(),
+    })

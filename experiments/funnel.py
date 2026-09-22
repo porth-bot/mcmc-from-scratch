@@ -23,7 +23,7 @@ Run:  python experiments/funnel.py
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.diagnostics import ess, integrated_autocorr_time, split_rhat
 from mcmc.hmc import hmc
 from mcmc.metropolis import random_walk_metropolis
@@ -128,6 +128,14 @@ def main():
         ax.set_title(f"{name}: single chain trace of $v$", loc="left")
     axes[-1].set_xlabel("iteration")
     savefig(fig, "funnel_traces.png")
+
+    save_results("funnel", {
+        "seed": SEED,
+        "dim": DIM,
+        "rows": rows,
+        "hmc_step_size": res_h.extras["step_size"],
+        "exact_sd_v": exact[:, 0].std(ddof=1),
+    })
 
 
 if __name__ == "__main__":
