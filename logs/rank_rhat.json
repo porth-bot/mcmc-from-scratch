@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "binds": "bulk",
+      "case": "A: mixed N(0,1)",
+      "classic": 1.0000330681839464,
+      "rank_bulk": 1.0000335977873964,
+      "rank_folded": 1.0002016843789656,
+      "rank_rhat": 1.0002016843789656
+    },
+    {
+      "binds": "bulk",
+      "case": "B: Cauchy, shifted location",
+      "classic": 1.0001504966043901,
+      "rank_bulk": 1.2669039062354102,
+      "rank_folded": 1.0002092751798994,
+      "rank_rhat": 1.2669039062354102
+    },
+    {
+      "binds": "folded",
+      "case": "C: Cauchy, shifted scale",
+      "classic": 0.999997143638295,
+      "rank_bulk": 0.9999299069147427,
+      "rank_folded": 1.1794945365251814,
+      "rank_rhat": 1.1794945365251814
+    }
+  ],
+  "chains": 4,
+  "draws_per_chain": 4000,
+  "seed": 20260719
+}

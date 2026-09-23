@@ -1,0 +1,66 @@
+{
+  "correlated_gaussian": [
+    {
+      "ESS/1k ev": 12.568773512661089,
+      "R-hat": 1.0005112460375576,
+      "draws": 160000,
+      "grad": "no",
+      "min ESS": 2111.5539501270628,
+      "sampler": "RWMH (ours)"
+    },
+    {
+      "ESS/1k ev": 49.93341080558496,
+      "R-hat": 1.0001562294386388,
+      "draws": 160000,
+      "grad": "no",
+      "min ESS": 16777.626030676547,
+      "sampler": "Gibbs (ours)"
+    },
+    {
+      "ESS/1k ev": 24.630291988783725,
+      "R-hat": 1.0001335078330307,
+      "draws": 40000,
+      "grad": "yes",
+      "min ESS": 20608.362349351253,
+      "sampler": "HMC (ours)"
+    },
+    {
+      "ESS/1k ev": 27.94803149581719,
+      "R-hat": 1.0025841150428998,
+      "draws": 256000,
+      "grad": "no",
+      "min ESS": 8049.927407803217,
+      "sampler": "emcee (stretch)"
+    }
+  ],
+  "eight_schools": [
+    {
+      "ESS(mu)": 600.7725331002918,
+      "ESS(tau)": 6689.9759847360765,
+      "ESS(tau)/1k ev": 7.602245437200087,
+      "R-hat(tau)": 1.0005586507785615,
+      "grad": "no",
+      "sampler": "Gibbs (ours)"
+    },
+    {
+      "ESS(mu)": 30273.568972061646,
+      "ESS(tau)": 5872.352079392277,
+      "ESS(tau)/1k ev": 6.441496987192672,
+      "R-hat(tau)": 1.0007663320627582,
+      "grad": "yes",
+      "sampler": "HMC (ours)"
+    },
+    {
+      "ESS(mu)": 6845.0145903615985,
+      "ESS(tau)": 6035.417951046194,
+      "ESS(tau)/1k ev": 6.858117757199893,
+      "R-hat(tau)": 1.0043051580927285,
+      "grad": "no",
+      "sampler": "emcee (stretch)"
+    }
+  ],
+  "eight_schools_hmc": {
+    "divergent": 464,
+    "draws": 40000
+  }
+}

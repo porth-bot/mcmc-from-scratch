@@ -32,7 +32,7 @@ Run:  python experiments/rank_rhat.py
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.diagnostics import rank_normalize, rank_normalized_rhat, split_rhat
 
 SEED = 20260719
@@ -97,6 +97,8 @@ def main():
         })
     print_table(rows, ["case", "classic", "rank_bulk", "rank_folded",
                        "rank_rhat", "binds"])
+    save_results("rank_rhat", {"seed": SEED, "chains": M, "draws_per_chain": N,
+                               "cases": rows})
     figure(cases(np.random.default_rng(SEED)))  # same seed -> table matches fig
 
 

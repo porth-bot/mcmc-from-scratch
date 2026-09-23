@@ -47,7 +47,7 @@ except ImportError:  # pragma: no cover - benchmark-only dependency
         "This benchmark needs emcee: pip install emcee  (see README 'Reproduce')."
     )
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.diagnostics import efficiency_summary, split_rhat
 from mcmc.gibbs import gibbs, make_gaussian_gibbs_updates
 from mcmc.hmc import hmc
@@ -174,6 +174,17 @@ def correlated_gaussian():
     return rows
 
 
+def _no_clock(rows):
+    """The rows without their wall-clock columns, for the log.
+
+    Seconds and ESS/s move with the machine and its load, so a log holding them
+    would drift on every rerun and teach ``reproduce.sh`` to ignore this file.
+    Everything else here is seeded and comes back identical.
+    """
+    return [{k: v for k, v in r.items() if k != "wall s" and "/s" not in k}
+            for r in rows]
+
+
 # --------------------------------------------------------------------------
 # Problem 2: eight schools (non-centered) -- the gradient-vs-no-gradient case
 # --------------------------------------------------------------------------
@@ -222,6 +233,8 @@ def eight_schools():
         gradient=True)
     print(f"  (HMC: accept={res.accept_rate.mean():.3f}, "
           f"divergent={res.extras['n_divergent']})")
+    hmc_divergence = {"divergent": res.extras["n_divergent"],
+                      "draws": res.samples.shape[0] * res.samples.shape[1]}
 
     # emcee on the same non-centered log-density (no gradient used)
     n_walkers = 40  # >> 2*dim, a healthy ensemble for dim=10
@@ -242,7 +255,7 @@ def eight_schools():
           "price of writing down the log-density alone. Centered Gibbs is fastest per\n"
           "second but its mu-theta coupling wrecks ESS(mu) (~600). This is emcee's\n"
           "real case: a competitive sampler with zero gradient work.")
-    return rows
+    return rows, hmc_divergence
 
 
 def figure(rows_gauss, rows_es):
@@ -281,7 +294,12 @@ def figure(rows_gauss, rows_es):
 
 def main():
     rows_gauss = correlated_gaussian()
-    rows_es = eight_schools()
+    rows_es, hmc_divergence = eight_schools()
+    save_results("external_benchmark", {
+        "correlated_gaussian": _no_clock(rows_gauss),
+        "eight_schools": _no_clock(rows_es),
+        "eight_schools_hmc": hmc_divergence,
+    })
     figure(rows_gauss, rows_es)
 
 
