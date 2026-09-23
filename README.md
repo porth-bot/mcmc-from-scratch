@@ -255,8 +255,10 @@ correlation an affine map removes costs it nothing) and even edges HMC's
 per-eval number. But recall an HMC evaluation is a *gradient*, the rest are
 *densities* (a gradient costs a constant factor more — the honest asterisk on
 the per-eval column). On a target this cheap and low-dimensional, exact-
-conditional Gibbs wins outright — both per evaluation and, at ~38k ESS/s,
-per wall-clock second. No single method leads on every axis.
+conditional Gibbs wins outright, both per evaluation and per wall-clock
+second (its ESS/s beat HMC's by about a third on three reruns here; timings
+move with the machine, so they are printed, not logged or tabled). No single
+method leads on every axis.
 
 **Eight schools** (10-dim), ESS on $\mu$ and the hard funnel-neck coordinate $\tau$:
 
