@@ -36,7 +36,7 @@ import time
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.diagnostics import efficiency_summary, split_rhat
 from mcmc.hmc import hmc
 from mcmc.metropolis import random_walk_metropolis
@@ -236,6 +236,14 @@ def funnel_divergences():
     fig.suptitle("NUTS removes the length knob, not the geometry: "
                  "divergences flag the neck", x=0.02, ha="left", y=1.05)
     savefig(fig, "nuts_funnel_divergences.png")
+    return {
+        "centered": {"draws": int(div.size), "divergent": int(res_c.extras["n_divergent"]),
+                     "mean_depth": res_c.extras["tree_depth"].mean(),
+                     "mean_v": v_c.mean(), "sd_v": v_c.std(ddof=1)},
+        "non_centered": {"draws": int(res_n.extras["divergent"].size),
+                         "divergent": int(res_n.extras["n_divergent"]),
+                         "sd_v": v_n.std(ddof=1)},
+    }
 
 
 def figure(rows_a, rows_b):
@@ -270,7 +278,15 @@ def main():
     rows_a = funnel_noncentered()
     rows_b = eight_schools_noncentered()
     figure(rows_a, rows_b)
-    funnel_divergences()
+    limit = funnel_divergences()
+    # Wall-clock moves with the machine, so it stays out of the log: everything
+    # left is seeded and comes back byte-identical.
+    def drop_wall(rows):
+        return [{k: v for k, v in r.items() if k != "wall s"} for r in rows]
+    save_results("nuts_benchmark", {"seed": SEED, "chains": N_CHAINS,
+                                    "funnel_noncentered": drop_wall(rows_a),
+                                    "eight_schools": drop_wall(rows_b),
+                                    "centered_funnel_limit": limit})
 
 
 if __name__ == "__main__":

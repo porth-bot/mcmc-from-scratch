@@ -30,7 +30,7 @@ Run:  python experiments/mass_matrix.py
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.diagnostics import ess
 from mcmc.hmc import hmc
 from mcmc.models import EightSchoolsNonCentered
@@ -146,6 +146,10 @@ def main():
     print("mu's entry is the largest -- the metric widens the coordinate the "
           "identity step size under-served; the diagonal cannot fix the funnel "
           "in (log tau, eta), which is why log tau's gain is modest.")
+    save_results("mass_matrix", {"seed": SEED, "chains": N_CHAINS,
+                                 "seeds_averaged": N_SEEDS, "sweep": sweep,
+                                 "eight_schools": es_rows,
+                                 "eight_schools_inv_mass": inv_mass})
 
 
 if __name__ == "__main__":

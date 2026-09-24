@@ -1,0 +1,88 @@
+{
+  "centered_funnel_limit": {
+    "centered": {
+      "divergent": 1585,
+      "draws": 12000,
+      "mean_depth": 2.6154166666666665,
+      "mean_v": 0.37328374642256223,
+      "sd_v": 2.6854665429402726
+    },
+    "non_centered": {
+      "divergent": 0,
+      "draws": 12000,
+      "sd_v": 3.0189708464821465
+    }
+  },
+  "chains": 4,
+  "eight_schools": [
+    {
+      "ESS(tau)": 5366.200799920918,
+      "ESS(tau)/1k ev": 20.639233845849684,
+      "R-hat(tau)": 1.000356513615398,
+      "depth": "nan",
+      "div": 0,
+      "draws": 240000,
+      "grad": "no",
+      "min ESS": 180.8940057958254,
+      "sampler": "RWMH"
+    },
+    {
+      "ESS(tau)": 6147.9423778310775,
+      "ESS(tau)/1k ev": 5.780336121827346,
+      "R-hat(tau)": 1.0004158882765006,
+      "depth": "nan",
+      "div": 547,
+      "draws": 48000,
+      "grad": "yes",
+      "min ESS": 6147.9423778310775,
+      "sampler": "HMC (fixed L=20)"
+    },
+    {
+      "ESS(tau)": 10779.486105693111,
+      "ESS(tau)/1k ev": 33.59989933792298,
+      "R-hat(tau)": 1.000002520264195,
+      "depth": 2.695375,
+      "div": 172,
+      "draws": 16000,
+      "grad": "yes",
+      "min ESS": 1963.2780840475095,
+      "sampler": "NUTS"
+    }
+  ],
+  "funnel_noncentered": [
+    {
+      "ESS(v)": 1101.9354545525428,
+      "ESS(v)/1k ev": 4.238213286740549,
+      "R-hat(v)": 1.0032693892216633,
+      "depth": "nan",
+      "div": 0,
+      "draws": 240000,
+      "grad": "no",
+      "min ESS": 1101.9354545525428,
+      "sampler": "RWMH"
+    },
+    {
+      "ESS(v)": 6616.140722966453,
+      "ESS(v)/1k ev": 6.69595652474137,
+      "R-hat(v)": 1.000823430180067,
+      "depth": "nan",
+      "div": 0,
+      "draws": 48000,
+      "grad": "yes",
+      "min ESS": 6616.140722966453,
+      "sampler": "HMC (fixed L=20)"
+    },
+    {
+      "ESS(v)": 4545.357515854229,
+      "ESS(v)/1k ev": 29.165324648723303,
+      "R-hat(v)": 1.0003307681724025,
+      "depth": 1.86325,
+      "div": 0,
+      "draws": 16000,
+      "grad": "yes",
+      "min ESS": 4545.357515854229,
+      "sampler": "NUTS"
+    }
+  ],
+  "seed": 20260703
+}
