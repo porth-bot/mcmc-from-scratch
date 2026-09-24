@@ -12,8 +12,9 @@ experiment writes the quantities its section quotes to ``logs/<name>.json``
 beside its figures, and ``reproduce.sh`` reports a log that comes back
 different the same way it reports a figure. This file is the second half.
 
-**It covers six of the fifteen sections so far** (§§1-4, 6 and 8, whose
-scripts run in seconds). ``NOT_YET`` names the rest, and
+**It covers eight of the fifteen sections so far** (§§1-4 and 6-9; the
+§7 and §9 scripts take about a minute each, §5's a little longer).
+``NOT_YET`` names the rest, and
 ``test_every_result_section_is_either_instrumented_or_listed`` fails when a
 section is added or renamed, so the gap is stated rather than discovered.
 
@@ -30,6 +31,12 @@ in September 2026 gave 21.1k to 21.3k. The ordering held (Gibbs
 beat HMC's ESS/s by about a third each time), so the claim stays and the
 number goes: wall-clock is not logged, so no rate in the README can be
 checked, and one that cannot be checked should not be quoted.
+
+**Third slice, §§7 and 9: nothing drifted.** Every cell of their four
+tables and the prose numbers around them (§7's "3 to 34" swing and its shared
+47.8 ceiling; §9's ~4x, 13% divergences, sd 2.7 vs 3.0) match their logs.
+Both scripts' logs came back byte-identical on a second run, with §9's
+wall-clock kept out. 30 perturbations of those numbers, 30 caught.
 
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
@@ -56,11 +63,13 @@ INSTRUMENTED = {
     "tempering": "4.",
     "external_benchmark": "6.",
     "rank_rhat": "8.",
+    "mass_matrix": "7.",
+    "nuts_benchmark": "9.",
 }
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
 NOT_YET = [
-    "5.", "7.", "9.", "10.", "11.", "12.", "13.", "14.", "15.",
+    "5.", "10.", "11.", "12.", "13.", "14.", "15.",
 ]
 
 
@@ -422,3 +431,157 @@ def test_section_8_verdicts():
     assert d["B"]["rank_rhat"] > 1.01 and d["C"]["rank_rhat"] > 1.01
     assert round(d["C"]["rank_bulk"], 2) == 1.00  # the location term is blind to C
     assert "SEED = " + str(log("rank_rhat")["seed"]) in section("8.")
+
+
+# -- Sec. 7: diagonal mass-matrix adaptation (experiments/mass_matrix.py) -----
+
+def _sweep_part(body: str) -> str:
+    return body.split("**Eight schools**")[0]
+
+
+@pytest.mark.parametrize("r", [2, 5, 10, 25, 50])
+def test_section_7_anisotropy_sweep_table(r):
+    s = {int(x["ratio r"]): x for x in log("mass_matrix")["sweep"]}[r]
+    cells = row(_sweep_part(section("7.")), str(r))
+    assert len(cells) == 3
+    assert_rounds_to(s["ident ESS/keval"], cells[0], f"§7 r={r} identity")
+    assert_rounds_to(s["adapt ESS/keval"], cells[1], f"§7 r={r} adapted")
+    got, true = re.fullmatch(r"([\d.]+) \((\d+)\)", cells[2]).groups()
+    assert_rounds_to(s["inv_mass[1]"], got, f"§7 r={r} recovered M^-1")
+    assert int(true) == s["true var[1]"] == r * r
+
+
+def test_section_7_sweep_bold_marks_the_identity_collapses():
+    """The two bold identity cells are the two lowest, the ones the prose's
+    "swinging from 3" refers to."""
+    sweep = log("mass_matrix")["sweep"]
+    body = _sweep_part(section("7."))
+    bolded = sorted(int(x["ratio r"]) for x in sweep
+                    if f"**{row(body, str(int(x['ratio r'])))[0]}**" in body)
+    lowest = sorted(int(x["ratio r"]) for x in
+                    sorted(sweep, key=lambda x: x["ident ESS/keval"])[:2])
+    assert bolded == lowest
+
+
+def test_section_7_sweep_prose():
+    sweep = log("mass_matrix")["sweep"]
+    body = section("7.")
+    ident = [x["ident ESS/keval"] for x in sweep]
+    adapt = [x["adapt ESS/keval"] for x in sweep]
+    lo, hi = re.search(r"swinging from (\d+) to (\d+)", body).groups()
+    assert_rounds_to(min(ident), lo, "§7 identity low")
+    assert_rounds_to(max(ident), hi, "§7 identity high")
+    # "a flat ~30 ESS/1k-grad regardless of scale": every r within 10% of 30,
+    # and the identity metric's spread at least five times wider.
+    flat = quoted(body, r"flat \$\\approx (\d+)\$ ESS")
+    assert all(abs(a / float(flat) - 1) < 0.1 for a in adapt), adapt
+    assert (max(ident) - min(ident)) > 5 * (max(adapt) - min(adapt))
+
+
+ES_COORDS = {"$\\mu$ (wide)": "mu", "$\\log\\tau$ (funnel)": "log tau",
+             "$\\eta_1$": "eta_1"}
+
+
+@pytest.mark.parametrize("label", sorted(ES_COORDS))
+def test_section_7_eight_schools_table(label):
+    r = {x["param"]: x for x in log("mass_matrix")["eight_schools"]}[ES_COORDS[label]]
+    cells = row(section("7.").split("**Eight schools**")[1], label)
+    assert len(cells) == 3
+    assert_rounds_to(r["ident ESS/keval"], cells[0], f"§7 {label} identity")
+    assert_rounds_to(r["adapt ESS/keval"], cells[1], f"§7 {label} adapted")
+    assert cells[2].endswith("×")
+    assert_rounds_to(r["gain x"], cells[2][:-1], f"§7 {label} gain")
+
+
+def test_section_7_eight_schools_prose():
+    rows = {x["param"]: x for x in log("mass_matrix")["eight_schools"]}
+    body = section("7.")
+    ceiling = quoted(body, r"shared ceiling of ([\d.]+)")
+    for p in ("mu", "eta_1"):
+        assert_rounds_to(rows[p]["adapt ESS/keval"], ceiling, f"§7 {p} ceiling")
+    assert_rounds_to(rows["log tau"]["gain x"],
+                     quoted(body, r"\$\\log\\tau\$ gains only ([\d.]+)×"),
+                     "§7 log tau gain in prose")
+    assert_rounds_to(rows["log tau"]["gain x"],
+                     quoted(body, r"single-seed ([\d.]+) above"),
+                     "§7 single-seed log tau gain")
+
+
+# -- Sec. 9: NUTS vs fixed-L HMC vs RWMH (experiments/nuts_benchmark.py) ------
+
+NUTS_ROWS = {"RWMH": "RWMH", "HMC (fixed $L=20$)": "HMC (fixed L=20)",
+             "NUTS": "NUTS"}
+
+
+def _nuts_tables(body: str) -> tuple[str, str]:
+    funnel, schools = body.split("| eight schools (10-dim)")
+    return funnel, schools.split("NUTS removes the length knob")[0]
+
+
+@pytest.mark.parametrize("label", sorted(NUTS_ROWS))
+def test_section_9_funnel_table(label):
+    r = {x["sampler"]: x for x in log("nuts_benchmark")["funnel_noncentered"]}[NUTS_ROWS[label]]
+    cells = row(_nuts_tables(section("9."))[0], label)
+    assert len(cells) == 5
+    assert cells[0] == ("gradient" if r["grad"] == "yes" else "density")
+    assert_rounds_to(r["ESS(v)"], cells[1].replace(",", ""), f"§9 funnel {label} ESS(v)")
+    assert_rounds_to(r["min ESS"], cells[2].replace(",", ""), f"§9 funnel {label} min ESS")
+    assert_rounds_to(r["ESS(v)/1k ev"], cells[3], f"§9 funnel {label} ESS/1k")
+    if cells[4] == "—":
+        assert r["depth"] == "nan"  # only NUTS builds a tree
+    else:
+        assert_rounds_to(r["depth"], cells[4], f"§9 funnel {label} depth")
+
+
+@pytest.mark.parametrize("label", sorted(NUTS_ROWS))
+def test_section_9_eight_schools_table(label):
+    r = {x["sampler"]: x for x in log("nuts_benchmark")["eight_schools"]}[NUTS_ROWS[label]]
+    cells = row(_nuts_tables(section("9."))[1], label)
+    assert len(cells) == 5
+    assert cells[0] == ("gradient" if r["grad"] == "yes" else "density")
+    assert_rounds_to(r["ESS(tau)"], cells[1].replace(",", ""), f"§9 schools {label} ESS(tau)")
+    assert_rounds_to(r["min ESS"], cells[2].replace(",", ""), f"§9 schools {label} min ESS")
+    assert_rounds_to(r["ESS(tau)/1k ev"], cells[3].rstrip("\\*"), f"§9 schools {label} ESS/1k")
+    assert int(cells[4]) == r["div"]
+
+
+def test_section_9_bold_winner_is_the_measured_winner():
+    d = log("nuts_benchmark")
+    for key, col in [("funnel_noncentered", "ESS(v)/1k ev"),
+                     ("eight_schools", "ESS(tau)/1k ev")]:
+        assert max(d[key], key=lambda x: x[col])["sampler"] == "NUTS"
+    body = section("9.")
+    assert body.count("| **NUTS** |") == 2
+
+
+def test_section_9_prose():
+    d = log("nuts_benchmark")
+    body = section("9.")
+    f = {x["sampler"]: x for x in d["funnel_noncentered"]}
+    s = {x["sampler"]: x for x in d["eight_schools"]}
+    assert_rounds_to(f["NUTS"]["ESS(v)/1k ev"] / f["HMC (fixed L=20)"]["ESS(v)/1k ev"],
+                     quoted(body, r"\*\*~(\d+)× the ESS per gradient\*\*"),
+                     "§9 NUTS/HMC ESS per gradient")
+    assert_rounds_to(f["NUTS"]["depth"], quoted(body, r"mean depth of\s+~(\d+)"),
+                     "§9 NUTS mean depth in prose")
+    assert_rounds_to(s["RWMH"]["ESS(tau)/1k ev"], quoted(body, r"RWMH's ([\d.]+)\\\*"),
+                     "§9 RWMH ESS/1k in prose")
+    worst_rw, worst_nuts = re.search(r"ESS\s+is ([\d,]+) against NUTS's ([\d,]+)",
+                                     body).groups()
+    assert_rounds_to(s["RWMH"]["min ESS"], worst_rw.replace(",", ""), "§9 RWMH min ESS")
+    assert_rounds_to(s["NUTS"]["min ESS"], worst_nuts.replace(",", ""), "§9 NUTS min ESS")
+
+
+def test_section_9_the_centered_funnel_limit():
+    lim = log("nuts_benchmark")["centered_funnel_limit"]
+    body = section("9.")
+    c, n = lim["centered"], lim["non_centered"]
+    assert_rounds_to(100 * c["divergent"] / c["draws"],
+                     quoted(body, r"— (\d+)% of iterations"), "§9 centered divergence %")
+    sd_c, true = re.search(r"\\mathrm\{sd\}\\,([\d.]+)\$ vs the true \$([\d.]+)\$",
+                           body).groups()
+    assert_rounds_to(c["sd_v"], sd_c, "§9 centered sd[v]")
+    assert float(true) == 3.0
+    assert n["divergent"] == 0 and "**zero** divergences" in body
+    assert_rounds_to(n["sd_v"], quoted(body, r"divergences and \$\\mathrm\{sd\}\\,([\d.]+)\$"),
+                     "§9 non-centered sd[v]")
