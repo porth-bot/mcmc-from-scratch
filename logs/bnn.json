@@ -1,0 +1,89 @@
+{
+  "calibration": [
+    {
+      "cover95": 0.9405940594059405,
+      "mean_std": 0.11214051871945169,
+      "method": "HMC (posterior)",
+      "nll": -0.6717189704148222,
+      "region": "observed"
+    },
+    {
+      "cover95": 1.0,
+      "mean_std": 0.24342355990334483,
+      "method": "HMC (posterior)",
+      "nll": 0.07534734337668529,
+      "region": "gap"
+    },
+    {
+      "cover95": 0.8778877887788779,
+      "mean_std": 0.10460536784603412,
+      "method": "deep ensemble (5)",
+      "nll": -0.5033014248843475,
+      "region": "observed"
+    },
+    {
+      "cover95": 0.5670103092783505,
+      "mean_std": 0.13618261751323887,
+      "method": "deep ensemble (5)",
+      "nll": 0.8381170876426017,
+      "region": "gap"
+    },
+    {
+      "cover95": 0.9075907590759076,
+      "mean_std": 0.09999999999999999,
+      "method": "point estimate (MAP)",
+      "nll": -0.6269042710195041,
+      "region": "observed"
+    },
+    {
+      "cover95": 0.29896907216494845,
+      "mean_std": 0.09999999999999999,
+      "method": "point estimate (MAP)",
+      "nll": 2.4716273033308362,
+      "region": "gap"
+    }
+  ],
+  "dim": 49,
+  "hmc": {
+    "accept": 0.901125,
+    "divergent": 0,
+    "step_size": 0.004200253416536246
+  },
+  "mass_matrix": [
+    {
+      "ESS/1k_grad": 1.1801041119333966,
+      "ESS_med": 927.0803495019809,
+      "ESS_min": 217.6492597079858,
+      "accept": 0.9028750000000001,
+      "diverg": 0,
+      "metric": "identity",
+      "scale_spread": 1.0,
+      "step": 0.00413393551194568
+    },
+    {
+      "ESS/1k_grad": 1.1509499544018473,
+      "ESS_med": 904.1770765784561,
+      "ESS_min": 232.7985719109302,
+      "accept": 0.907625,
+      "diverg": 1,
+      "metric": "adapted diagonal",
+      "scale_spread": 7.39557939361109,
+      "step": 0.0033745039371634675
+    }
+  ],
+  "n_test": 400,
+  "n_test_gap": 97,
+  "pred_ess": {
+    "median": 910.0300140723862,
+    "min": 237.99177774781091
+  },
+  "pred_rhat": {
+    "max": 1.079586372421816,
+    "median": 1.0178457505472807
+  },
+  "seed": 20260703,
+  "weight_rhat": {
+    "max": 2.5764446543914823,
+    "median": 1.5503152222721908
+  }
+}

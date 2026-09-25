@@ -27,7 +27,7 @@ Run:  python experiments/bnn.py   (~1-2 min)
 """
 
 import numpy as np
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 
 from mcmc.bnn import BayesianNNRegression, make_gapped_sine, train_map
 from mcmc.diagnostics import ess, split_rhat
@@ -228,6 +228,18 @@ def main():
         "most and stays calibrated.", fontsize=9,
     )
     savefig(fig, "bnn_predictive.png")
+    save_results("bnn", {
+        "seed": SEED, "dim": model.dim, "n_test": int(X_test.size),
+        "n_test_gap": int(gap_mask.sum()),
+        "hmc": {"accept": float(hmc_res.accept_rate.mean()),
+                "step_size": hmc_res.extras["step_size"],
+                "divergent": int(hmc_res.extras["n_divergent"])},
+        "weight_rhat": {"median": float(np.median(w_rhat)), "max": w_rhat.max()},
+        "pred_rhat": {"median": float(np.median(pred_rhat)), "max": pred_rhat.max()},
+        "pred_ess": {"min": pred_ess.min(), "median": float(np.median(pred_ess))},
+        "mass_matrix": mm,
+        "calibration": rows,
+    })
 
 
 if __name__ == "__main__":
