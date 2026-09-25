@@ -12,8 +12,8 @@ experiment writes the quantities its section quotes to ``logs/<name>.json``
 beside its figures, and ``reproduce.sh`` reports a log that comes back
 different the same way it reports a figure. This file is the second half.
 
-**It covers eight of the fifteen sections so far** (§§1-4 and 6-9; the
-§7 and §9 scripts take about a minute each, §5's a little longer).
+**It covers nine of the fifteen sections so far** (§§1-9; the §5, §7
+and §9 scripts take about a minute each).
 ``NOT_YET`` names the rest, and
 ``test_every_result_section_is_either_instrumented_or_listed`` fails when a
 section is added or renamed, so the gap is stated rather than discovered.
@@ -38,6 +38,15 @@ tables and the prose numbers around them (§7's "3 to 34" swing and its shared
 Both scripts' logs came back byte-identical on a second run, with §9's
 wall-clock kept out. 30 perturbations of those numbers, 30 caught.
 
+**Fourth slice, §5: one drifted cell.** The calibration table gave the deep
+ensemble's mean predictive std on the observed region as 0.11. The log holds
+0.1046: ``bnn.py`` prints 0.105 and that was rounded again by hand, upward,
+the same double rounding as §2's sd[v]. At 0.10 it sits level with the MAP
+ribbon's fixed noise std, which is what the ensemble's band looks like on the
+data. Every other cell of both tables, and the prose numbers (7.4x scale
+spread, weight R-hat 1.55 / 2.58, prediction R-hat 1.02 / 1.08), match.
+The log came back byte-identical on a second run. 39 perturbations, 39 caught.
+
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
 """
@@ -61,6 +70,7 @@ INSTRUMENTED = {
     "funnel": "2.",
     "eight_schools": "3.",
     "tempering": "4.",
+    "bnn": "5.",
     "external_benchmark": "6.",
     "rank_rhat": "8.",
     "mass_matrix": "7.",
@@ -69,7 +79,7 @@ INSTRUMENTED = {
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
 NOT_YET = [
-    "5.", "10.", "11.", "12.", "13.", "14.", "15.",
+    "10.", "11.", "12.", "13.", "14.", "15.",
 ]
 
 
@@ -585,3 +595,90 @@ def test_section_9_the_centered_funnel_limit():
     assert n["divergent"] == 0 and "**zero** divergences" in body
     assert_rounds_to(n["sd_v"], quoted(body, r"divergences and \$\\mathrm\{sd\}\\,([\d.]+)\$"),
                      "§9 non-centered sd[v]")
+
+
+# -- Sec. 5: Bayesian neural network (experiments/bnn.py) ---------------------
+
+CALIB_COLS = ["cover95", "nll", "mean_std"]
+CALIB_ROWS = [(m, reg) for m in ("HMC (posterior)", "deep ensemble (5)",
+                                 "point estimate (MAP)")
+              for reg in ("observed", "gap")]
+
+
+def _calibration_cells(method: str, region: str) -> list[str]:
+    """The calibration table keys a row on two cells, so `row` cannot find it."""
+    body = section("5.").split("| method | region |")[1].split("\n\n")[0]
+    return row(body.replace(f"| {method} | {region} |", f"| {method}/{region} |")
+               .replace(f"| {method} | **{region}** |", f"| {method}/{region} |"),
+               f"{method}/{region}")
+
+
+@pytest.mark.parametrize("method,region", CALIB_ROWS)
+def test_section_5_calibration_table(method, region):
+    r = {(x["method"], x["region"]): x
+         for x in log("bnn")["calibration"]}[(method, region)]
+    cells = _calibration_cells(method, region)
+    assert len(cells) == len(CALIB_COLS)
+    for col, cell in zip(CALIB_COLS, cells):
+        assert_rounds_to(r[col], cell, f"§5 {method} {region} {col}")
+
+
+@pytest.mark.parametrize("label", ["identity", "adapted diagonal"])
+def test_section_5_mass_matrix_table(label):
+    r = {x["metric"]: x for x in log("bnn")["mass_matrix"]}[label]
+    body = section("5.").split("| metric | step size |")[1]
+    cells = row(body, label)
+    assert len(cells) == 5
+    for col, cell in zip(["step", "accept", "ESS_med", "ESS/1k_grad"], cells):
+        assert_rounds_to(r[col], cell, f"§5 {label} {col}")
+    assert int(cells[4]) == r["diverg"]
+
+
+def test_section_5_calibration_prose():
+    d = log("bnn")
+    body = section("5.")
+    c = {(x["method"], x["region"]): x for x in d["calibration"]}
+    assert d["dim"] == int(quoted(body, r"\$3H\+1 = (\d+)\$ dimensions"))
+    assert d["n_test"] == int(quoted(body, r"calibration on (\d+) fresh points"))
+    mp = c[("point estimate (MAP)", "gap")]
+    assert_rounds_to(mp["cover95"], quoted(body, r"collapses\s+to ([\d.]+)"),
+                     "§5 MAP gap coverage in prose")
+    assert_rounds_to(mp["nll"], quoted(body, r"NLL blows up to ([\d.]+)"),
+                     "§5 MAP gap NLL in prose")
+    assert_rounds_to(c[("deep ensemble (5)", "gap")]["cover95"],
+                     quoted(body, r"under-covers the gap \(([\d.]+)\)"),
+                     "§5 ensemble gap coverage in prose")
+    hmc_cov, hmc_nll = re.search(r"stays calibrated \(([\d.]+) / NLL ([\d.]+)\)",
+                                 body).groups()
+    hg = c[("HMC (posterior)", "gap")]
+    assert_rounds_to(hg["cover95"], hmc_cov, "§5 HMC gap coverage in prose")
+    assert_rounds_to(hg["nll"], hmc_nll, "§5 HMC gap NLL in prose")
+    # "HMC widens the most": the widest gap band of the three
+    gap = [x for x in d["calibration"] if x["region"] == "gap"]
+    assert max(gap, key=lambda x: x["mean_std"])["method"] == "HMC (posterior)"
+
+
+def test_section_5_mass_matrix_prose():
+    mm = {x["metric"]: x for x in log("bnn")["mass_matrix"]}
+    body = section("5.")
+    ident, diag = mm["identity"], mm["adapted diagonal"]
+    assert_rounds_to(diag["scale_spread"], quoted(body, r"do span ([\d.]+)×"),
+                     "§5 adapted scale spread")
+    # "It buys nothing" and "The step size does not go *up*"
+    assert diag["ESS/1k_grad"] <= ident["ESS/1k_grad"]
+    assert diag["step"] <= ident["step"]
+
+
+def test_section_5_convergence_in_function_space():
+    d = log("bnn")
+    body = section("5.")
+    med, mx = re.search(r"median ([\d.]+) and up to ([\d.]+) across coordinates",
+                        body).groups()
+    assert_rounds_to(d["weight_rhat"]["median"], med, "§5 weight R-hat median")
+    assert_rounds_to(d["weight_rhat"]["max"], mx, "§5 weight R-hat max")
+    med, mx = re.search(r"sits at ([\d.]+) \(max ([\d.]+)\)", body).groups()
+    assert_rounds_to(d["pred_rhat"]["median"], med, "§5 prediction R-hat median")
+    assert_rounds_to(d["pred_rhat"]["max"], mx, "§5 prediction R-hat max")
+    # "with ESS in the hundreds"
+    assert "ESS in the hundreds" in body
+    assert 100 <= d["pred_ess"]["min"] and d["pred_ess"]["median"] < 1000

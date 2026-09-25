@@ -188,7 +188,7 @@ the gap (95% target coverage):
 |---|---|---|---|---|
 | HMC (posterior) | observed | 0.94 | −0.67 | 0.11 |
 | HMC (posterior) | **gap** | **1.00** | **0.08** | **0.24** |
-| deep ensemble (5) | observed | 0.88 | −0.50 | 0.11 |
+| deep ensemble (5) | observed | 0.88 | −0.50 | 0.10 |
 | deep ensemble (5) | **gap** | 0.57 | 0.84 | 0.14 |
 | point estimate (MAP) | observed | 0.91 | −0.63 | 0.10 |
 | point estimate (MAP) | **gap** | **0.30** | **2.47** | 0.10 |
