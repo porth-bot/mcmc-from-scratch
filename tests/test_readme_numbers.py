@@ -12,8 +12,8 @@ experiment writes the quantities its section quotes to ``logs/<name>.json``
 beside its figures, and ``reproduce.sh`` reports a log that comes back
 different the same way it reports a figure. This file is the second half.
 
-**It covers nine of the fifteen sections so far** (§§1-9; the §5, §7
-and §9 scripts take about a minute each).
+**It covers ten of the fifteen sections so far** (§§1-10; the §5, §7,
+§9 and §10 scripts take about a minute each).
 ``NOT_YET`` names the rest, and
 ``test_every_result_section_is_either_instrumented_or_listed`` fails when a
 section is added or renamed, so the gap is stated rather than discovered.
@@ -47,6 +47,15 @@ data. Every other cell of both tables, and the prose numbers (7.4x scale
 spread, weight R-hat 1.55 / 2.58, prediction R-hat 1.02 / 1.08), match.
 The log came back byte-identical on a second run. 39 perturbations, 39 caught.
 
+**Fifth slice, §10: every table cell clean, two sentences overstated.** All
+eight ladder cells, the twelve bias cells, the separated-modes table and the
+effective-particle counts match ``logs/ais.json``. The prose did not. "Plain
+importance sampling wins by 2.6x" was the margin over T = 100 from the tuning
+grid, while the ladder table it sits under shows T = 10 at 2.0x and the log
+has T = 2 at 1.3x; the sentence now gives both margins. "The jackknife removes
+a factor of 3-20" was 3.3 to 23.0; now 3-23. The log came back byte-identical
+on a second run and the figure did not move. 51 perturbations, 51 caught.
+
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
 """
@@ -75,11 +84,12 @@ INSTRUMENTED = {
     "rank_rhat": "8.",
     "mass_matrix": "7.",
     "nuts_benchmark": "9.",
+    "ais": "10.",
 }
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
 NOT_YET = [
-    "10.", "11.", "12.", "13.", "14.", "15.",
+    "11.", "12.", "13.", "14.", "15.",
 ]
 
 
@@ -682,3 +692,136 @@ def test_section_5_convergence_in_function_space():
     # "with ESS in the hundreds"
     assert "ESS in the hundreds" in body
     assert 100 <= d["pred_ess"]["min"] and d["pred_ess"]["median"] < 1000
+
+
+# -- Sec. 10: annealed importance sampling (experiments/ais.py) ---------------
+
+LADDER_COLS = {"T=1": 1, "T=10": 10, "T=100": 100, "T=500": 500}
+
+
+@pytest.mark.parametrize("dim", [4, 8])
+def test_section_10_ladder_table(dim):
+    rows = {r["T"]: r for r in log("ais")[f"ladder_d{dim}"]}
+    cells = row(section("10."), f"$d = {dim}$, RMSE of $\\log Z$")
+    assert len(cells) == 5
+    for (label, t), cell in zip(LADDER_COLS.items(), cells):
+        assert_rounds_to(rows[t]["rmse"], cell, f"§10 d={dim} {label} rmse")
+    best = min(rows.values(), key=lambda r: r["rmse"])
+    assert cells[4] == f"$T = {best['T']}$"
+
+
+def test_section_10_bold_marks_the_best_ladder():
+    body = section("10.")
+    for dim in (4, 8):
+        cells = row(body, f"$d = {dim}$, RMSE of $\\log Z$")
+        raw = [ln for ln in body.splitlines()
+               if ln.startswith(f"| $d = {dim}$, RMSE")][0].split("|")[2:6]
+        bold = [c for c, r in zip(cells, raw) if "**" in r]
+        rows = {r["T"]: r for r in log("ais")[f"ladder_d{dim}"]}
+        best = min(rows[t]["rmse"] for t in LADDER_COLS.values())
+        assert len(bold) == 1 and float(bold[0]) == round(best, 3)
+
+
+def test_section_10_ladder_prose():
+    d = log("ais")
+    body = " ".join(section("10.").split())
+    l4 = {r["T"]: r for r in d["ladder_d4"]}
+    l8 = {r["T"]: r for r in d["ladder_d8"]}
+    assert d["log_z"] == float(quoted(body, r"so \$\\log Z = ([\d.]+)\$ exactly"))
+    assert d["budget"] == int(quoted(body, r"budget held at ([\d,]+),").replace(",", ""))
+    assert d["n_replicates"] == int(quoted(body, r"over (\d+) replicates:"))
+    # "beats every ladder length": T = 1 has the lowest RMSE at d = 4
+    assert min(l4.values(), key=lambda r: r["rmse"])["T"] == 1
+    t2, ratio2 = re.search(r"\$T = 2\$ scores ([\d.]+), ([\d.]+)× worse",
+                           body).groups()
+    assert_rounds_to(l4[2]["rmse"], t2, "§10 T=2 rmse")
+    assert_rounds_to(l4[2]["rmse"] / l4[1]["rmse"], ratio2, "§10 T=2 margin")
+    tuned = [r for r in d["tuning_d4"] if r["T"] > 1]
+    assert len(d["tuning_d4"]) == {"eight": 8}[quoted(body, r"(\w+) settings of ladder")]
+    best, ratio = re.search(r"best annealed one is ([\d.]+), ([\d.]+)× worse",
+                            body).groups()
+    best_tuned = min(r["rmse"] for r in tuned)
+    assert_rounds_to(best_tuned, best, "§10 best tuned rmse")
+    assert_rounds_to(best_tuned / l4[1]["rmse"], ratio, "§10 tuned margin")
+    best8 = min(l8.values(), key=lambda r: r["rmse"])
+    assert_rounds_to(l8[1]["rmse"] / best8["rmse"],
+                     quoted(body, r"annealing is worth ([\d.]+)×"),
+                     "§10 d=8 annealing gain")
+
+
+def test_section_10_effective_particles():
+    d = log("ais")
+    body = " ".join(section("10.").split())
+    l4 = {r["T"]: r for r in d["ladder_d4"]}
+    frac1, eff1 = re.search(r"\$T = 1\$ has an ESS fraction of ([\d.]+) .*?"
+                            r"particles is \*\*(\d+)\*\* effective", body).groups()
+    assert_rounds_to(l4[1]["ESS frac"], frac1, "§10 T=1 ESS fraction")
+    assert_rounds_to(l4[1]["eff. particles"], eff1, "§10 T=1 effective particles")
+    frac500, eff500 = re.search(r"\$T = 500\$ turns a fraction of ([\d.]+) "
+                                r"into \*\*(\d+)\*\*", body).groups()
+    assert_rounds_to(l4[500]["ESS frac"], frac500, "§10 T=500 ESS fraction")
+    assert_rounds_to(l4[500]["eff. particles"], eff500,
+                     "§10 T=500 effective particles")
+    assert_rounds_to(d["ladder_d8"][0]["eff. particles"],
+                     quoted(body, r"down to \*\*([\d.]+)\*\* effective"),
+                     "§10 d=8 T=1 effective particles")
+    assert d["ladder_d8"][0]["T"] == 1
+
+
+@pytest.mark.parametrize("label,key", [("bias (nats)", "bias"),
+                                       ("after jackknife", "jack bias")])
+def test_section_10_bias_table(label, key):
+    rows = log("ais")["bias"]
+    body = section("10.")
+    ns = [int(n) for n in row(body, "$N$")]
+    assert ns == [r["N"] for r in rows]
+    cells = row(body, label)
+    assert len(cells) == len(rows)
+    for r, cell in zip(rows, cells):
+        assert_rounds_to(r[key], cell, f"§10 N={r['N']} {key}")
+
+
+def test_section_10_bias_prose():
+    rows = log("ais")["bias"]
+    body = " ".join(section("10.").split()).replace("−", "-")
+    assert all(r["bias"] < 0 for r in rows)  # "sits *below* the truth"
+    assert all(abs(r["jack bias"]) < abs(r["bias"]) for r in rows)
+    lo, hi = re.search(r"a factor of (\d+)–(\d+) here", body).groups()
+    ratios = [r["bias"] / r["jack bias"] for r in rows]
+    assert_rounds_to(min(ratios), lo, "§10 smallest jackknife reduction")
+    assert_rounds_to(max(ratios), hi, "§10 largest jackknife reduction")
+    first, last = re.search(r"drifts from (-\d+) to (-\d+)", body).groups()
+    assert_rounds_to(rows[0]["N*bias"], first, "§10 N*bias at the smallest N")
+    assert_rounds_to(rows[-1]["N*bias"], last, "§10 N*bias at the largest N")
+    assert rows[-1]["N"] == int(quoted(body, r"real work at \$N = (\d+)\$"))
+    assert 3 * log("ais")["n_replicates"] == int(
+        quoted(body, r"\((\d+) replicates per row\)"))
+
+
+MODE_ROWS = ["broad, covers both", "narrow on left mode", "narrow on right mode"]
+
+
+@pytest.mark.parametrize("start", MODE_ROWS)
+def test_section_10_separated_modes_table(start):
+    r = {(x["start"], x["T"]): x for x in log("ais")["separated_modes"]}[(start, 200)]
+    cells = row(section("10."), start)
+    assert len(cells) == 4
+    assert_rounds_to(r["log Z"], cells[0], f"§10 {start} log Z")
+    assert_rounds_to(r["err"], cells[1], f"§10 {start} error")
+    if r["predicted err"] == "--":
+        assert cells[2] == "—"
+    else:
+        assert cells[2].endswith(f"= {r['predicted err']}$")
+        assert_rounds_to(r["err"], r["predicted err"], f"§10 {start} exact miss")
+    assert_rounds_to(r["ESS frac"], cells[3], f"§10 {start} ESS fraction")
+
+
+def test_section_10_modes_prose():
+    modes = {(x["start"], x["T"]): x for x in log("ais")["separated_modes"]}
+    body = " ".join(section("10.").split()).replace("−", "-")
+    assert_rounds_to(modes[("broad, covers both", 200)]["err"],
+                     quoted(body, r"right anyway \(error (-[\d.]+)\)"),
+                     "§10 broad-start error in prose")
+    # "both report a *perfect* effective sample size"
+    for start in MODE_ROWS[1:]:
+        assert round(modes[(start, 200)]["ESS frac"], 3) == 1.0

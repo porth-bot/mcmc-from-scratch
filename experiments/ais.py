@@ -13,8 +13,9 @@ is worth running.
    T * n_transition * N target evaluations, so a longer ladder means fewer
    particles. Sweeping T at a fixed budget is a different question from the
    usual "AIS beats IS", and at d = 4 it has a different answer: **plain
-   importance sampling wins**, by 2.6x, and no ladder length, step size, or
-   number of transitions tried here closes the gap. Spending a fixed budget on
+   importance sampling wins**, by 1.3x over the shortest ladder (T = 2) and
+   2.6x over the best tuned one, and no ladder length, step size, or number
+   of transitions tried here closes the gap. Spending a fixed budget on
    particles beats spending it on temperatures whenever IS still has effective
    particles left to spend.
 

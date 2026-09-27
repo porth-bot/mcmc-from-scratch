@@ -445,10 +445,11 @@ particles. Sweeping $T$ with the budget held at 40,000, over 40 replicates:
 | $d = 4$, RMSE of $\log Z$ | **0.072** | 0.142 | 0.186 | 0.160 | $T = 1$ |
 | $d = 8$, RMSE of $\log Z$ | 1.091 | 2.154 | 0.926 | **0.595** | $T = 500$ |
 
-At $d = 4$ plain importance sampling wins by 2.6×, and it is not an untuned
-comparison: eight settings of ladder length, step size, and transitions per
-rung were tried, and the best annealed one is 0.186. At $d = 8$ the ordering
-reverses and annealing is worth 1.8×.
+At $d = 4$ plain importance sampling beats every ladder length, though the
+shortest comes close: $T = 2$ scores 0.097, 1.3× worse. It is not an untuned
+comparison either: eight settings of ladder length, step size, and transitions
+per rung were tried, and the best annealed one is 0.186, 2.6× worse. At $d = 8$
+the ordering reverses and annealing is worth 1.8×.
 
 The column that reconciles them is the effective particle count, not the ESS
 *fraction* the diagnostic reports. At $d = 4$, $T = 1$ has an ESS fraction of
@@ -469,7 +470,7 @@ row), the estimate of $\log Z$ sits *below* the truth by
 
 Jensen fixes the sign, so an under-resourced run *understates* the evidence
 rather than scattering around it — the failure that quietly decides a Bayes
-factor. The jackknife removes most of it (a factor of 3–20 here) and not all.
+factor. The jackknife removes most of it (a factor of 3–23 here) and not all.
 And the decay is slower than the $O(1/N)$ leading term predicts over this
 range: $N \times \text{bias}$ drifts from −303 to −493 instead of settling, so
 the higher-order terms are still doing real work at $N = 1600$.
