@@ -38,7 +38,7 @@ Run:  python experiments/ais.py     (~60 s)
 """
 
 import numpy as np
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 
 from mcmc.ais import annealed_importance_sampling, geometric_betas
 from mcmc.targets import Gaussian, GaussianMixture
@@ -316,11 +316,16 @@ def figure(ladder4, ladder8, dims, bias, modes):
 def main():
     ladder4 = ladder_sweep(dim=4)
     ladder8 = ladder_sweep(dim=8)
-    tuning_check(dim=4)
+    tuning = tuning_check(dim=4)
     dims = dimension_sweep()
     bias = bias_study()
     modes = separated_modes()
     figure(ladder4, ladder8, dims, bias, modes)
+    save_results("ais", {
+        "log_z": LOG_Z, "budget": BUDGET, "n_replicates": N_REPLICATES,
+        "ladder_d4": ladder4, "ladder_d8": ladder8, "tuning_d4": tuning,
+        "dimension_sweep": dims, "bias": bias, "separated_modes": modes,
+    })
 
 
 if __name__ == "__main__":
