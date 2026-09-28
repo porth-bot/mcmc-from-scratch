@@ -12,8 +12,8 @@ experiment writes the quantities its section quotes to ``logs/<name>.json``
 beside its figures, and ``reproduce.sh`` reports a log that comes back
 different the same way it reports a figure. This file is the second half.
 
-**It covers ten of the fifteen sections so far** (§§1-10; the §5, §7,
-§9 and §10 scripts take about a minute each).
+**It covers eleven of the fifteen sections so far** (§§1-11; the §5, §7,
+§9 and §10 scripts take about a minute each, §11's about ten seconds).
 ``NOT_YET`` names the rest, and
 ``test_every_result_section_is_either_instrumented_or_listed`` fails when a
 section is added or renamed, so the gap is stated rather than discovered.
@@ -56,6 +56,17 @@ has T = 2 at 1.3x; the sentence now gives both margins. "The jackknife removes
 a factor of 3-20" was 3.3 to 23.0; now 3-23. The log came back byte-identical
 on a second run and the figure did not move. 51 perturbations, 51 caught.
 
+**Sixth slice, §11: one drifted cell, two sentences overstated.** The
+matched-cost table gave SGHMC's ESS per gradient at friction 0.5 as 0.0709.
+The run's value is 0.070849: ``sghmc.py`` prints 0.07085 and that was rounded
+again by hand, upward, the same double rounding as §§2 and 5. It is now
+0.0708. "Raising the friction helps, exactly 2x per doubling" measured 1.97x to
+1.99x at the step the claim is made for (2x is the small-step limit), and "the
+MAP fit is 43x quieter" held at batch 10 only; at batch 50 it is 32x. The
+"300x" was 319x at a friction the section never named; both are now stated.
+Every closed-form cell, the gamma = 0 growth, and the BNN noise table match.
+The log came back byte-identical on a second run and the figure did not move.
+
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
 """
@@ -85,11 +96,12 @@ INSTRUMENTED = {
     "mass_matrix": "7.",
     "nuts_benchmark": "9.",
     "ais": "10.",
+    "sghmc": "11.",
 }
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
 NOT_YET = [
-    "11.", "12.", "13.", "14.", "15.",
+    "12.", "13.", "14.", "15.",
 ]
 
 
@@ -825,3 +837,200 @@ def test_section_10_modes_prose():
     # "both report a *perfect* effective sample size"
     for start in MODE_ROWS[1:]:
         assert round(modes[(start, 200)]["ESS frac"], 3) == 1.0
+
+
+# -- Sec. 11: SGHMC and its friction (experiments/sghmc.py) --------------------
+
+CLOSED_FORM_ARMS = ["exact gradient", "noisy, uncorrected", "noisy, corrected"]
+
+
+def _sci(cell: str) -> tuple[str, int]:
+    """'$2.1\\times10^{7}$' -> ('2.1', 7)."""
+    m = re.fullmatch(r"\$([\d.]+)\\times10\^\{(-?\d+)\}\$", cell.strip())
+    assert m, f"{cell!r} is not a $m\\times10^{{e}}$ cell"
+    return m.group(1), int(m.group(2))
+
+
+def assert_sci_rounds_to(measured: float, cell: str, what: str) -> None:
+    mantissa, exp = _sci(cell)
+    assert_rounds_to(float(measured) / 10.0 ** exp, mantissa, what)
+
+
+@pytest.mark.parametrize("arm", CLOSED_FORM_ARMS)
+def test_section_11_closed_form_table(arm):
+    body = section("11.")
+    steps = [number(c) for c in row(body, "$h$")]
+    rows = {float(r["step"]): r for r in log("sghmc")["closed_form"]
+            if r["arm"] == arm}
+    cells = row(body, arm)
+    assert len(cells) == len(steps)
+    for h, cell in zip(steps, cells):
+        if cell == "*refused*":
+            assert float(h) not in rows, f"§11 {arm} h={h} ran after all"
+            continue
+        assert_rounds_to(float(rows[float(h)]["predicted"]), cell,
+                         f"§11 {arm} h={h}")
+
+
+def test_section_11_closed_form_prose():
+    d = log("sghmc")
+    body = " ".join(section("11.").split())
+    cells = d["closed_form"]
+    assert len(cells) == int(quoted(body, r"closed form, (\d+) cells, three arms"))
+    n_chains, n_draws = re.search(r"(\d+) chains × (\d+) draws\)\. The table",
+                                  body).groups()
+    assert (int(n_chains), int(n_draws)) == (d["n_chains"], d["n_samples"])
+    worst = max(abs(float(r["observed"]) / float(r["predicted"]) - 1)
+                for r in cells)
+    assert_rounds_to(100 * worst, quoted(body, r"within \*\*([\d.]+)%\*\* of its"),
+                     "§11 worst sampled-vs-closed-form cell")
+    # "The corrected row is the exact-gradient row *identically*"
+    exact = {r["step"]: r["predicted"] for r in cells if r["arm"] == "exact gradient"}
+    for r in cells:
+        if r["arm"] == "noisy, corrected":
+            assert r["predicted"] == exact[r["step"]]
+    # the cap 2 gamma / Vhat, and that the one step past it was refused
+    cap = 2 * d["friction"] / d["noise_var"]
+    assert_rounds_to(cap, quoted(body, r"caps the step at \$2\\gamma/\\hat V = ([\d.]+)\$"),
+                     "§11 friction cap")
+    ran = {r["step"] for r in cells if r["arm"] == "noisy, corrected"}
+    refused = set(exact) - ran
+    assert refused and all(float(h) > cap for h in refused)
+    assert all(float(h) <= cap for h in ran)
+
+
+def test_section_11_error_orders():
+    o = log("sghmc")["orders"]
+    body = " ".join(section("11.").split())
+    disc = [float(e) for e in o["discretization_error"]]
+    noisy = [float(e) for e in o["uncorrected_error"]]
+    steps = o["steps"]
+    assert steps[-1] == float(quoted(body, r"by \$h = ([\d.]+)\$ the second"))
+    assert_rounds_to(noisy[-1] / disc[-1],
+                     quoted(body, r"the second is \*\*(\d+)× the first\*\*"),
+                     "§11 miscorrection over discretization")
+    g, v = re.search(r"\(at \$\\gamma = (\d+)\$, \$V = (\d+)\$\)", body).groups()
+    assert (float(g), float(v)) == (o["noisy_friction"], o["noise_var"])
+    # "over four halvings the discretization term falls 4x each time and the
+    # miscorrection term only 2x": the last four halvings, to 0.0125
+    halvings = zip(range(len(steps) - 5, len(steps) - 1),
+                   range(len(steps) - 4, len(steps)))
+    for i, j in halvings:
+        assert steps[i] == 2 * steps[j]
+        assert disc[i] / disc[j] == pytest.approx(4.0, rel=0.07)
+        assert noisy[i] / noisy[j] == pytest.approx(2.0, rel=0.05)
+    f = o["friction_sweep"]
+    errs = [float(e) for e in f["uncorrected_error"]]
+    ratios = [a / b for a, b in zip(errs, errs[1:])]
+    lo, hi = re.search(r"cuts the miscorrection term by ([\d.]+)× to ([\d.]+)×",
+                       body).groups()
+    assert f["step"] == float(quoted(body, r"at \$h = ([\d.]+)\$ each doubling"))
+    assert f["frictions"][0] == float(quoted(body, r"from \$\\gamma = ([\d.]+)\$ to"))
+    assert f["frictions"][-1] == float(quoted(body, r"\$ to (\d+) cuts"))
+    assert_rounds_to(min(ratios), lo, "§11 smallest friction-doubling gain")
+    assert_rounds_to(max(ratios), hi, "§11 largest friction-doubling gain")
+
+
+def test_section_11_no_friction_growth():
+    rows = log("sghmc")["no_friction"]
+    body = " ".join(section("11.").split())
+    printed = re.search(r"steps — ([\d., ]+) against a target variance of 1, "
+                        r"at 1k through 16k steps", body).group(1)
+    printed = [p.strip() for p in printed.split(",") if p.strip()]
+    assert len(printed) == len(rows)
+    assert [r["steps"] for r in rows] == [1000 * 2 ** i for i in range(len(rows))]
+    for r, p in zip(rows, printed):
+        assert_rounds_to(float(r["var"]), p, f"§11 gamma=0 after {r['steps']}")
+
+
+MATCHED_COLS = ["-", "0.25", "0.5", "1", "2", "4"]
+
+
+def test_section_11_matched_cost_table():
+    body = section("11.")
+    rows = {r["friction"]: r for r in log("sghmc")["matched_cost"]}
+    header = [ln for ln in body.splitlines() if ln.startswith("| | SGLD")]
+    assert len(header) == 1
+    frictions = ["-"] + re.findall(r"\$\\gamma\{=\}([\d.]+)\$", header[0])
+    assert frictions == MATCHED_COLS
+    steps, per_grad, vs = (row(body, "step"), row(body, "ESS / gradient"),
+                           row(body, "vs SGLD"))
+    sgld = float(rows["-"]["ess"]) / rows["-"]["grad_evals"]
+    for f, s, e, x in zip(frictions, steps, per_grad, vs):
+        r = rows[f]
+        pg = float(r["ess"]) / r["grad_evals"]
+        assert_rounds_to(float(r["step"]), s, f"§11 step at friction {f}")
+        assert_rounds_to(pg, e, f"§11 ESS/gradient at friction {f}")
+        assert x.endswith("×")
+        assert_rounds_to(pg / sgld, x[:-1], f"§11 gain over SGLD at friction {f}")
+
+
+def test_section_11_bold_marks_the_best_friction():
+    body = section("11.")
+    raw = [ln for ln in body.splitlines()
+           if ln.startswith("| ESS / gradient")][0].split("|")[2:-1]
+    bold = [i for i, c in enumerate(raw) if "**" in c]
+    rows = {r["friction"]: r for r in log("sghmc")["matched_cost"]}
+    best = max(MATCHED_COLS,
+               key=lambda f: float(rows[f]["ess"]) / rows[f]["grad_evals"])
+    assert bold == [MATCHED_COLS.index(best)]
+
+
+def test_section_11_matched_cost_prose():
+    d = log("sghmc")
+    body = " ".join(section("11.").split())
+    rows = d["matched_cost"]
+    lo, hi = re.search(r"measured variances \(([\d.]+) to ([\d.]+)\)", body).groups()
+    vars_ = [float(r["observed_var"]) for r in rows]
+    assert_rounds_to(min(vars_), lo, "§11 lowest matched-cost variance")
+    assert_rounds_to(max(vars_), hi, "§11 highest matched-cost variance")
+    assert_rounds_to(1 + d["bias"], quoted(body, r"targeted ([\d.]+) within"),
+                     "§11 targeted variance")
+    # "all agree ... within their own Monte Carlo error": two standard errors
+    for r in rows:
+        z = (float(r["observed_var"]) - (1 + d["bias"])) / float(r["var_stderr"])
+        assert abs(z) < 2, (r["friction"], z)
+    n_chains, n_draws = re.search(r"(\d+) chains × ([\d,]+) draws:", body).groups()
+    n_draws = int(n_draws.replace(",", ""))
+    # one gradient per step, warmup included (5000 steps)
+    for r in rows:
+        assert r["grad_evals"] == int(n_chains) * (n_draws + 5000)
+    lo, hi = re.search(r"Momentum is worth ([\d.]+)–([\d.]+)×", body).groups()
+    sgld = float(rows[0]["ess"]) / rows[0]["grad_evals"]
+    gains = [float(r["ess"]) / r["grad_evals"] / sgld for r in rows[1:]]
+    assert_rounds_to(min(gains), lo, "§11 smallest momentum gain")
+    assert_rounds_to(max(gains), hi, "§11 largest momentum gain")
+
+
+BNN_ROWS = [("prior draw", 10), ("prior draw", 50), ("MAP fit", 10), ("MAP fit", 50)]
+
+
+@pytest.mark.parametrize("where,batch", BNN_ROWS)
+def test_section_11_bnn_table(where, batch):
+    r = {(x["where"], x["batch"]): x for x in log("sghmc")["bnn_noise"]}[(where, batch)]
+    body = section("11.")
+    hits = [ln for ln in body.splitlines()
+            if ln.startswith(f"| {where} | {batch} |")]
+    assert len(hits) == 1
+    cells = [c.strip() for c in hits[0].strip().strip("|").split("|")][2:]
+    assert len(cells) == 3
+    for key, cell in zip(["worst_coord_var", "max_step_gamma1",
+                          "max_step_any_gamma"], cells):
+        assert_sci_rounds_to(float(r[key]), cell, f"§11 {where} b={batch} {key}")
+
+
+def test_section_11_bnn_prose():
+    rows = log("sghmc")["bnn_noise"]
+    body = " ".join(section("11.").split())
+    n, dim = re.search(r"BNN posterior \((\d+) points, (\d+) weights\)", body).groups()
+    assert all((r["n_data"], r["dim"]) == (int(n), int(dim)) for r in rows)
+    worst = {(r["where"], r["batch"]): float(r["worst_coord_var"]) for r in rows}
+    lo, b_lo, hi, b_hi = re.search(
+        r"the MAP fit is (\d+)× \(batch (\d+)\) to (\d+)× \(batch (\d+)\) quieter",
+        body).groups()
+    ratios = {b: worst[("prior draw", b)] / worst[("MAP fit", b)]
+              for b in {r["batch"] for r in rows}}
+    assert_rounds_to(ratios[int(b_lo)], lo, "§11 quieter at the large batch")
+    assert_rounds_to(ratios[int(b_hi)], hi, "§11 quieter at the small batch")
+    assert min(ratios.values()) == ratios[int(b_lo)]
+    assert max(ratios.values()) == ratios[int(b_hi)]

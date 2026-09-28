@@ -524,10 +524,13 @@ S = s^2 + \tfrac{h^2}{4} P + \frac{s^2 h \,\Delta V}{2\gamma}.$$
 So an uncorrected minibatch noise is an $O(h)$ error divided by the friction,
 against an $O(h^2)$ discretization error. Shrinking the step barely helps: over
 four halvings the discretization term falls 4× each time and the miscorrection
-term only 2×, and by $h = 0.0125$ the second is **300× the first**. Raising
-$\gamma$ *does* help, exactly 2× per doubling. The position–momentum correlation
-is nonzero at every step and every friction, which the target says should be
-zero — an artifact of updating $\theta$ with the new velocity, not of the noise.
+term only 2×, and by $h = 0.0125$ the second is **319× the first** (at
+$\gamma = 2$, $V = 4$). Raising $\gamma$ *does* help, about 2× per doubling:
+at $h = 0.05$ each doubling from $\gamma = 0.5$ to 4 cuts the miscorrection
+term by 1.97× to 1.99×, and 2× is the small-step limit. The position–momentum
+correlation is nonzero at every step and every friction, which the target says
+should be zero — an artifact of updating $\theta$ with the new velocity, not of
+the noise.
 
 **Sampler against closed form, 23 cells, three arms** ($\gamma = 1$, $V = 4$,
 512 chains × 8000 draws). The table is the *closed form* for
@@ -562,7 +565,7 @@ truth. Effective samples per gradient, 64 chains × 20,000 draws:
 | | SGLD | SGHMC $\gamma{=}0.25$ | $\gamma{=}0.5$ | $\gamma{=}1$ | $\gamma{=}2$ | $\gamma{=}4$ |
 |---|---|---|---|---|---|---|
 | step | 0.1990 | 0.1965 | 0.1941 | 0.1894 | 0.1802 | 0.1633 |
-| ESS / gradient | 0.0083 | **0.0763** | 0.0709 | 0.0611 | 0.0370 | 0.0169 |
+| ESS / gradient | 0.0083 | **0.0763** | 0.0708 | 0.0611 | 0.0370 | 0.0169 |
 | vs SGLD | 1.0× | **9.2×** | 8.5× | 7.4× | 4.5× | 2.0× |
 
 The measured variances (1.0002 to 1.0155) all agree with the targeted 1.0100
@@ -586,7 +589,8 @@ with $\hat V$ the worst per-coordinate minibatch-gradient variance:
 | MAP fit | 50 | $9.1\times10^{4}$ | $2.2\times10^{-5}$ | $6.6\times10^{-3}$ |
 
 Measured at two points because the noise is local: a badly-fit draw has large
-residuals, and the MAP fit is 43× quieter. It does not change the conclusion.
+residuals, and the MAP fit is 32× (batch 50) to 43× (batch 10) quieter. It
+does not change the conclusion.
 **The correction that makes SGHMC correct is not affordable here** — buying it
 at a usable step needs a friction so large that the discretization it is
 supposed to fix becomes unstable — which is the same shape as SGLD's own

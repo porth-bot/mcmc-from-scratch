@@ -140,7 +140,7 @@ def test_the_two_errors_separate_by_their_order_in_the_step():
     assert rn[-1] == pytest.approx(2.0, rel=0.02)
 
     # The gap between the two widens as the step shrinks, which is the point:
-    # at h = 0.0125 the uncorrected term is 300x the discretization one.
+    # at h = 0.0125 the uncorrected term is 319x the discretization one.
     assert noisy[-1] / disc[-1] > 100
     assert noisy[-1] / disc[-1] > 4 * (noisy[1] / disc[1])
 
