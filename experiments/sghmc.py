@@ -39,7 +39,7 @@ Run:  python experiments/sghmc.py   (~11 s)
 """
 
 import numpy as np
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 
 from mcmc.bnn import BayesianNNRegression, make_gapped_sine, train_map
 from mcmc.diagnostics import ess
@@ -122,6 +122,70 @@ def closed_form_study(steps=STEPS, friction=FRICTION, seed=SEED):
             print(f"  {label:<20s} h={h:.3f}  predicted {predicted:.5f}  "
                   f"observed {observed:.5f}  ratio {observed / predicted:.4f}",
                   flush=True)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# 1b. what the closed form says on its own, and what gamma = 0 does instead
+# ---------------------------------------------------------------------------
+ORDER_STEPS = (0.4, 0.2, 0.1, 0.05, 0.025, 0.0125)
+ORDER_FRICTION = 2.0
+ORDER_FRICTIONS = (0.5, 1.0, 2.0, 4.0)
+
+
+def order_study(steps=ORDER_STEPS, friction=ORDER_FRICTION):
+    """The two error terms of relation (4), from the closed form alone.
+
+    The discretization error ``S - s^2`` of the exact-gradient sampler and the
+    error of the noisy, uncorrected one, at halving steps, plus the uncorrected
+    error at doubling friction. No sampling: these are the numbers the
+    README's order argument quotes, at the settings ``tests/test_sghmc.py``
+    asserts them at.
+    """
+    disc = [sghmc_gaussian_cov(h, 1.0, TARGET_VAR)[0, 0] - TARGET_VAR
+            for h in steps]
+    noisy = [sghmc_gaussian_cov(h, friction, TARGET_VAR,
+                                grad_noise_var=NOISE_VAR,
+                                est_noise_var=0.0)[0, 0] - TARGET_VAR
+             for h in steps]
+    by_friction = [sghmc_gaussian_cov(0.05, g, TARGET_VAR,
+                                      grad_noise_var=NOISE_VAR,
+                                      est_noise_var=0.0)[0, 0] - TARGET_VAR
+                   for g in ORDER_FRICTIONS]
+    out = {
+        "steps": list(steps), "noisy_friction": friction,
+        "noise_var": NOISE_VAR,
+        "discretization_error": [f"{e:.6e}" for e in disc],
+        "uncorrected_error": [f"{e:.6e}" for e in noisy],
+        "friction_sweep": {"step": 0.05, "frictions": list(ORDER_FRICTIONS),
+                           "uncorrected_error": [f"{e:.6e}"
+                                                 for e in by_friction]},
+    }
+    print(f"  at h={steps[-1]} the uncorrected error is "
+          f"{noisy[-1] / disc[-1]:.0f}x the discretization error "
+          f"(gamma={friction:g}, V={NOISE_VAR:g})", flush=True)
+    return out
+
+
+DIVERGE_STEPS = (1000, 2000, 4000, 8000, 16000)
+
+
+def no_friction_study(n_steps=DIVERGE_STEPS, seed=0):
+    """gamma = 0 with a noisy gradient: Var[theta] after n steps, per n.
+
+    Same setting as ``tests/test_sghmc.py``'s divergence test (h = 0.05,
+    V = 1, 256 chains from the origin), which asserts the growth; this
+    records the numbers.
+    """
+    target = NoisyGaussian(noise_var=1.0)
+    rows = []
+    for n in n_steps:
+        rng = np.random.default_rng(seed)
+        res = sghmc(target, np.zeros((256, 1)), n_samples=1, step_size=0.05,
+                    friction=0.0, rng=rng, n_warmup=n, batch_size=1)
+        var = float(res.pooled().var())
+        rows.append({"steps": n, "var": f"{var:.6f}"})
+        print(f"  gamma=0, {n:6d} steps: Var[theta] = {var:.4f}", flush=True)
     return rows
 
 
@@ -312,6 +376,8 @@ def make_figure(closed_rows, matched_rows):
 def main():
     print("1. sampler vs closed form, three arms")
     closed_rows = closed_form_study()
+    orders = order_study()
+    diverge_rows = no_friction_study()
 
     print("\n2. matched cost, matched bias: SGLD vs SGHMC")
     matched_rows = matched_cost_study()
@@ -327,6 +393,14 @@ def main():
     print_table(bnn_rows, ["where", "batch", "worst_coord_var",
                            "max_step_gamma1", "max_step_any_gamma"])
     make_figure(closed_rows, matched_rows)
+    save_results("sghmc", {
+        "target_var": TARGET_VAR, "friction": FRICTION,
+        "noise_var": NOISE_VAR, "n_chains": N_CHAINS,
+        "n_samples": N_SAMPLES, "bias": BIAS,
+        "closed_form": closed_rows, "orders": orders,
+        "no_friction": diverge_rows, "matched_cost": matched_rows,
+        "bnn_noise": bnn_rows,
+    })
 
 
 if __name__ == "__main__":
