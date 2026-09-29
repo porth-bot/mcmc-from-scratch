@@ -26,11 +26,11 @@ Predictions, derived in ``mcmc/tails.py`` and scored here rather than asserted:
 the mean's error falls like n^(1/dof - 1) below dof = 2 and not at all at
 dof = 1; the plug-in sd *grows* like n^(1/dof - 1/2) there.
 
-Run:  python experiments/heavy_tails.py   (~90 s)
+Run:  python experiments/heavy_tails.py   (~20 s)
 """
 
 import numpy as np
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 
 from mcmc.diagnostics import ess
 from mcmc.hmc import hmc
@@ -241,6 +241,12 @@ def main():
                        "cover"])
 
     figure(rates, covers, arms)
+    save_results("heavy_tails", {
+        "seed": SEED, "dofs": list(DOFS), "ns": list(NS),
+        "n_replicates": N_REPLICATES, "bound": BOUND,
+        "mcmc_n": MCMC_N, "mcmc_chains": MCMC_CHAINS,
+        "rates": rates, "coverage": covers, "arms": arms,
+    })
 
 
 if __name__ == "__main__":
