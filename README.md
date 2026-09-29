@@ -648,17 +648,19 @@ itself infinite. The obvious summary of the error does not exist either.
 **2. The second failure is not the one the folklore predicts, and measuring it
 killed this section's intended headline.** The expectation going in was that
 `mean ± 1.96 s/√n` would badly under-cover where the variance it estimates does
-not exist. It does not. Coverage is at or above nominal at *every* dof, the
-Cauchy included:
+not exist. It does not. Coverage is at nominal or within Monte Carlo error of
+it at *every* dof, the Cauchy included: the lowest cell is 0.947, and over
+1,600 replicates a cell carries about ±0.011 at two standard errors. (The width
+ratio is taken from the unrounded widths.)
 
 | $\nu$ | coverage, n=250 | width | coverage, n=16,000 | width | width ratio |
 |---|---|---|---|---|---|
 | 1.0 | 0.977 | 2.374 | 0.980 | 2.326 | **1.02×** |
-| 1.25 | 0.976 | 0.935 | 0.968 | 0.392 | 2.39× |
-| 1.5 | 0.969 | 0.530 | 0.969 | 0.141 | 3.76× |
-| 2.5 | 0.953 | 0.232 | 0.951 | 0.032 | 7.25× |
-| 5.0 | 0.952 | 0.159 | 0.949 | 0.020 | 7.95× |
-| 30 | 0.947 | 0.128 | 0.951 | 0.016 | 8.00× |
+| 1.25 | 0.976 | 0.935 | 0.968 | 0.392 | 2.38× |
+| 1.5 | 0.969 | 0.530 | 0.969 | 0.141 | 3.75× |
+| 2.5 | 0.953 | 0.232 | 0.951 | 0.032 | 7.17× |
+| 5.0 | 0.952 | 0.159 | 0.949 | 0.020 | 7.93× |
+| 30 | 0.947 | 0.128 | 0.951 | 0.016 | 7.98× |
 
 The statistic is **self-normalized** — $s$ is inflated by exactly the draws that
 inflate the numerator — and for symmetric heavy tails that ratio stays tight.
@@ -666,10 +668,10 @@ The algebra says the same thing and is the more useful form: $s$ grows like
 $n^{1/\nu - 1/2}$, so the half-width $s/\sqrt n$ shrinks like $n^{1/\nu - 1}$,
 which is the mean's *true* error rate from the table above. The interval is
 rate-matched for free. What it loses is not honesty but information: at
-$\nu = 1$, **64× the data buys a 2% narrower interval**, against the 8.00× a
-light-tailed target delivers at the same budget. The trouble is legible in the
-width's scaling with $n$, never in the coverage — and only if you vary $n$ at
-all, which one run does not.
+$\nu = 1$, **64× the data buys a 2% narrower interval**, against the 7.98× a
+light-tailed target delivers at the same budget ($\sqrt{64} = 8$ is the limit).
+The trouble is legible in the width's scaling with $n$, never in the coverage —
+and only if you vary $n$ at all, which one run does not.
 
 **3. The third failure is the sampler's, it is real, and it is the only one ESS
 sees.** At $n = 4{,}000 \times 256$ chains:
@@ -682,14 +684,16 @@ sees.** At $n = 4{,}000 \times 256$ chains:
 | 30 | 1.000 | 0.222 | 0.363 | 8 | 6 | 6 |
 
 A bulk-scaled proposal under-visits the tails, and the cost is steep: HMC's ESS
-per draw falls **180×** between $\nu = 30$ and the Cauchy, and the farthest
-excursion any chain makes falls three orders of magnitude short of where exact
-draws reach. That is exactly what ESS was built to detect, and it detects it.
+per draw falls **187×** between $\nu = 30$ and the Cauchy (the table's
+rounded cells make it look like 180), and at the Cauchy the farthest excursion
+any chain makes falls three orders of magnitude (1,081×) short of where exact
+draws reach; at $\nu = 1.5$ the shortfall is 31×. That is exactly what ESS
+was built to detect, and it detects it.
 
 **The point of running all three together is what ESS does on the first
-failure: nothing.** The i.i.d. arm reads ESS/draw = 1.000 at every dof — it must,
-there is no autocorrelation — while its sample mean at $\nu = 1.5$ is converging
-at $n^{-1/3}$ and at $\nu = 1$ is not converging at all. ESS measures
+failure: nothing.** The i.i.d. arm reads ESS/draw of 0.998 to 1.000 at every
+dof — it must, there is no autocorrelation — while its sample mean at
+$\nu = 1.5$ is converging at $n^{-1/3}$ and at $\nu = 1$ is not converging at all. ESS measures
 autocorrelation, which is one of the three things that can go wrong here, and a
 perfect ESS is consistent with an estimator that will never reach its target.
 The diagnostic that would have caught it is the one nobody plots: the interval

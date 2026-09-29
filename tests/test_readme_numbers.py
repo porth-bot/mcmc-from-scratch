@@ -12,8 +12,9 @@ experiment writes the quantities its section quotes to ``logs/<name>.json``
 beside its figures, and ``reproduce.sh`` reports a log that comes back
 different the same way it reports a figure. This file is the second half.
 
-**It covers eleven of the fifteen sections so far** (§§1-11; the §5, §7,
-§9 and §10 scripts take about a minute each, §11's about ten seconds).
+**It covers twelve of the fifteen sections so far** (§§1-12; the §5, §7,
+§9 and §10 scripts take about a minute each, §11's about ten seconds, §12's
+about twenty).
 ``NOT_YET`` names the rest, and
 ``test_every_result_section_is_either_instrumented_or_listed`` fails when a
 section is added or renamed, so the gap is stated rather than discovered.
@@ -67,6 +68,18 @@ MAP fit is 43x quieter" held at batch 10 only; at batch 50 it is 32x. The
 Every closed-form cell, the gamma = 0 growth, and the BNN noise table match.
 The log came back byte-identical on a second run and the figure did not move.
 
+**§12, heavy tails: every cell typed from the output matched, and every
+number worked out by hand from rounded cells did not.** The width-ratio column
+was divided out of the 3-dp widths, so five of its six cells were off (7.25x
+for 7.17x at nu = 2.5, 8.00x for 7.98x at nu = 30); "HMC's ESS per draw falls
+180x" is 187x unrounded. Two sentences were stronger than their own tables:
+"coverage at or above nominal at every dof" beside cells of 0.947 and 0.949
+(within the +/-0.011 two-sigma band over 1,600 replicates, which the section
+now says), and "the i.i.d. arm reads ESS/draw = 1.000 at every dof" beside a
+0.998. "Three orders of magnitude short" of the exact draws' reach holds at the
+Cauchy (1,081x) but is 31x at nu = 1.5; both are now given. The log came back
+byte-identical on a second run and the figure did not move.
+
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
 """
@@ -97,11 +110,12 @@ INSTRUMENTED = {
     "nuts_benchmark": "9.",
     "ais": "10.",
     "sghmc": "11.",
+    "heavy_tails": "12.",
 }
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
 NOT_YET = [
-    "12.", "13.", "14.", "15.",
+    "13.", "14.", "15.",
 ]
 
 
@@ -1034,3 +1048,154 @@ def test_section_11_bnn_prose():
     assert_rounds_to(ratios[int(b_hi)], hi, "§11 quieter at the small batch")
     assert min(ratios.values()) == ratios[int(b_lo)]
     assert max(ratios.values()) == ratios[int(b_hi)]
+
+
+# -- Sec. 12: heavy tails (experiments/heavy_tails.py) ------------------------
+
+def _dof_label(dof: float) -> str:
+    """The README's first-column spelling: 1.0, 1.25, 1.5, 2.5, 5.0, 30."""
+    return "30" if dof == 30.0 else f"{dof:g}" if dof % 1 else f"{dof:.1f}"
+
+
+def _table(header: str) -> dict[str, list[str]]:
+    """The §12 table whose header row starts with `header`, as label -> cells.
+
+    §12's three tables share their first column (the dof), so ``row`` cannot
+    tell them apart; this reads one table at a time.
+    """
+    lines = section("12.").splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith(header)]
+    assert len(starts) == 1, f"table {header!r} found {len(starts)} times"
+    out = {}
+    for ln in lines[starts[0] + 2:]:
+        if not ln.startswith("|"):
+            break
+        cs = [c.strip().replace("**", "").replace("−", "-")
+              for c in ln.strip().strip("|").split("|")]
+        out[cs[0]] = cs[1:]
+    return out
+
+
+RATE_TABLE = "| $\\nu$ | mean, measured"
+COVER_TABLE = "| $\\nu$ | coverage, n=250"
+ARMS_TABLE = "| $\\nu$ | ESS/draw: iid"
+
+
+@pytest.mark.parametrize("dof", [1.0, 1.25, 1.5, 2.5, 5.0, 30.0])
+def test_section_12_rate_table(dof):
+    r = {x["dof"]: x for x in log("heavy_tails")["rates"]}[dof]
+    cells = _table(RATE_TABLE)[_dof_label(dof)]
+    assert len(cells) == 5
+    for key, cell in zip(["mean rate", "predicted", "P(|X|<=1) rate",
+                          "sd rate", "sd predicted"], cells):
+        assert_rounds_to(r[key], cell.lstrip("+"), f"§12 dof={dof} {key}")
+
+
+@pytest.mark.parametrize("dof", [1.0, 1.25, 1.5, 2.5, 5.0, 30.0])
+def test_section_12_coverage_table(dof):
+    c = {x["dof"]: x for x in log("heavy_tails")["coverage"]}[dof]
+    cells = _table(COVER_TABLE)[_dof_label(dof)]
+    assert len(cells) == 5
+    for key, cell in zip(["cover n=250", "width n=250", "cover n=16000",
+                          "width n=16000"], cells):
+        assert_rounds_to(c[key], cell, f"§12 dof={dof} {key}")
+    assert_rounds_to(c["width n=250"] / c["width n=16000"], cells[4].rstrip("×"),
+                     f"§12 dof={dof} width ratio")
+
+
+def test_section_12_coverage_prose():
+    d = log("heavy_tails")
+    body = " ".join(section("12.").split())
+    covers = [c[k] for c in d["coverage"] for k in ("cover n=250", "cover n=16000")]
+    assert_rounds_to(min(covers), quoted(body, r"the lowest cell is ([\d.]+),"),
+                     "§12 lowest coverage")
+    reps = int(quoted(body, r"over ([\d,]+) replicates a cell").replace(",", ""))
+    assert reps == 4 * d["n_replicates"]   # coverage_sweep draws 4x the replicates
+    band = 2 * (0.95 * 0.05 / reps) ** 0.5
+    assert_rounds_to(band, quoted(body, r"carries about ±([\d.]+) at two"),
+                     "§12 two-sigma coverage band")
+    # "at nominal or within Monte Carlo error of it at every dof"
+    assert all(c >= 0.95 - band for c in covers)
+    # "64x the data buys a 2% narrower interval, against the 7.98x ..."
+    ns = d["ns"]
+    assert ns[-1] // ns[0] == int(quoted(body, r"\*\*(\d+)× the data buys"))
+    cov = {c["dof"]: c for c in d["coverage"]}
+    shrink = {k: v["width n=250"] / v["width n=16000"] for k, v in cov.items()}
+    assert_rounds_to(100 * (1 - 1 / shrink[1.0]),
+                     quoted(body, r"buys a (\d+)% narrower interval"),
+                     "§12 Cauchy width gain")
+    assert_rounds_to(shrink[30.0], quoted(body, r"against the ([\d.]+)× a light"),
+                     "§12 light-tailed width ratio")
+    assert int(quoted(body, r"\$\\sqrt\{(\d+)\} = \d+\$ is the limit")) == ns[-1] // ns[0]
+    assert int(quoted(body, r"\$\\sqrt\{\d+\} = (\d+)\$ is the limit")) ** 2 == ns[-1] // ns[0]
+    header = section("12.").splitlines()
+    header = [ln for ln in header if ln.startswith(COVER_TABLE)][0]
+    assert re.findall(r"n=([\d,]+)", header) == [f"{ns[0]}", f"{ns[-1]:,}"]
+
+
+@pytest.mark.parametrize("dof", [1.0, 1.5, 5.0, 30.0])
+def test_section_12_sampler_table(dof):
+    arms = {x["arm"]: x for x in log("heavy_tails")["arms"] if x["dof"] == dof}
+    table = _table(ARMS_TABLE)
+    assert sorted(table, key=float) == ["1.0", "1.5", "5.0", "30"]
+    cells = table[_dof_label(dof)]
+    assert len(cells) == 6
+    for arm, cell in zip(["iid", "rwm", "hmc"], cells[:3]):
+        assert_rounds_to(arms[arm]["ess/draw"], cell, f"§12 dof={dof} {arm} ESS/draw")
+    for arm, cell in zip(["iid", "rwm", "hmc"], cells[3:]):
+        assert arms[arm]["max|x|"] == int(cell.replace(",", "")), (dof, arm)
+
+
+def test_section_12_sampler_prose():
+    d = log("heavy_tails")
+    body = " ".join(section("12.").split())
+    arms = {(a["dof"], a["arm"]): a for a in d["arms"]}
+    n, chains = re.search(r"At \$n = ([\d{},]+) \\times (\d+)\$ chains", body).groups()
+    assert int(re.sub(r"\D", "", n)) == d["mcmc_n"] and int(chains) == d["mcmc_chains"]
+    light = float(quoted(body, r"\*\* between \$\\nu = (\d+)\$ and the Cauchy"))
+    assert light == max(d["dofs"])
+    assert_rounds_to(arms[(light, "hmc")]["ess/draw"] / arms[(1.0, "hmc")]["ess/draw"],
+                     quoted(body, r"falls \*\*(\d+)×\*\* between"), "§12 HMC ESS fall")
+    # "(the table's rounded cells make it look like 180)"
+    table = _table(ARMS_TABLE)
+    looks = float(table["30"][2]) / float(table["1.0"][2])
+    assert round(looks, -1) == int(quoted(body, r"make it look like (\d+)\)"))
+
+    def reach(dof):
+        return arms[(dof, "iid")]["max|x|"] / max(arms[(dof, a)]["max|x|"]
+                                                  for a in ("rwm", "hmc"))
+
+    cauchy = int(quoted(body, r"three orders of magnitude \(([\d,]+)×\)").replace(",", ""))
+    assert round(reach(1.0)) == cauchy and 1000 <= cauchy < 10000
+    assert round(reach(1.5)) == int(quoted(body, r"at \$\\nu = 1\.5\$ the shortfall is (\d+)×"))
+    lo, hi = re.search(r"reads ESS/draw of ([\d.]+) to ([\d.]+) at every", body).groups()
+    iid = [a["ess/draw"] for a in d["arms"] if a["arm"] == "iid"]
+    assert_rounds_to(min(iid), lo, "§12 lowest iid ESS/draw")
+    assert_rounds_to(max(iid), hi, "§12 highest iid ESS/draw")
+    # "their error on the bounded functional is <= 0.004 at every dof"
+    worst = max(a["P(|X|<=1) err"] for a in d["arms"] if a["arm"] != "iid")
+    bound = quoted(body, r"bounded functional is ≤ ([\d.]+) at every")
+    assert worst <= float(bound)
+    assert_rounds_to(worst, bound, "§12 worst sampler error, bounded functional")
+    # "coverage 0.996-1.000 in the low-dof MCMC cells" (dof <= 2.5)
+    lo, hi = re.search(r"coverage ([\d.]+)–([\d.]+) in the low-dof", body).groups()
+    low = [a["cover"] for a in d["arms"] if a["arm"] != "iid" and a["dof"] <= 2.5]
+    assert_rounds_to(min(low), lo, "§12 low-dof MCMC coverage, lowest")
+    assert_rounds_to(max(low), hi, "§12 low-dof MCMC coverage, highest")
+    band = (0.95 * 0.05 / d["mcmc_chains"]) ** 0.5
+    assert_rounds_to(band, quoted(body, r"carries about ±([\d.]+), so"),
+                     "§12 256-replicate coverage se")
+    assert int(quoted(body, r"table is over (\d+) replicates")) == d["mcmc_chains"]
+    # "its sample mean at nu = 1.5 is converging at n^{-1/3} and at nu = 1 is
+    # not converging at all": the generalized-CLT exponents the log carries
+    rates = {r["dof"]: r["predicted"] for r in d["rates"]}
+    nu, num, den = re.search(r"sample mean at \$\\nu = ([\d.]+)\$ is converging "
+                             r"at \$n\^\{-(\d+)/(\d+)\}\$", body).groups()
+    assert rates[float(nu)] == pytest.approx(-int(num) / int(den))
+    assert rates[float(quoted(body, r"and at \$\\nu = ([\d.]+)\$ is not converging"))] == 0
+
+
+def test_section_12_bounded_functional_holds_root_n():
+    """'The bounded functional holds n^-1/2 at every nu including the Cauchy.'"""
+    rates = [r["P(|X|<=1) rate"] for r in log("heavy_tails")["rates"]]
+    assert all(abs(r + 0.5) < 0.05 for r in rates), rates
