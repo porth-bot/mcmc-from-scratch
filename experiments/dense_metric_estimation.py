@@ -28,12 +28,12 @@ optimal metric:
      identity / adapted-diagonal / adapted-dense on the same target, same
      seeds, warmup charged to all three.
 
-Run:  python experiments/dense_metric_estimation.py
+Run:  python experiments/dense_metric_estimation.py   (~75 s)
 """
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.adapt import estimate_covariance, WindowMoments, whitened_condition_number
 from mcmc.diagnostics import ess
 from mcmc.hmc import hmc
@@ -269,6 +269,14 @@ def main():
     print_table(rows_c, ["metric", "kappa", "best_L", "ess_per_kgrad", "at_L=25"])
 
     make_figure(rows_a, kappa_diag, rows_b, curves, lengths)
+    save_results("dense_metric_estimation", {
+        "seed": SEED, "n_chains": N_CHAINS,
+        "kappa_R": kappa_diag,
+        "estimator_quality": rows_a,
+        "dimension_sweep": rows_b,
+        "sampler": rows_c,
+        "sampler_curves": curves, "lengths": lengths,
+    })
 
 
 if __name__ == "__main__":
