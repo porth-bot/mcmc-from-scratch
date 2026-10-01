@@ -152,7 +152,7 @@ def sampler_benchmark(d=10, rho=0.95, n_seeds=3, lengths=(1, 2, 5, 10, 25, 50)):
     correlated direction at all, while a whitened target (kappa ~ 1.3) has one
     period and is decorrelated in a couple of steps. Fix L at the identity's
     optimum and the dense metric is charged ~20 gradients per sample it does
-    not need; the measured 9x win collapses to 1.1x. So sweep L for every
+    not need; the measured 9.9x win collapses to 1.1x. So sweep L for every
     metric and report each at its best -- and report the fixed-L number too,
     since that is the comparison a reader would otherwise assume.
     """

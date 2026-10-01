@@ -80,6 +80,20 @@ now says), and "the i.i.d. arm reads ESS/draw = 1.000 at every dof" beside a
 Cauchy (1,081x) but is 31x at nu = 1.5; both are now given. The log came back
 byte-identical on a second run and the figure did not move.
 
+**§13, the dense metric: one drifted cell, one stale ratio, three sentences
+too wide.** Stan's dense metric reached kappa 1.3547 and the table said 1.36
+(the script prints 1.355, then rounded up by hand), and "9.8x over the
+identity metric" is 165.03 / 16.75 = 9.85, which is 9.9 at the precision
+printed; it was repeated three more times in the README. The estimator table
+was captioned "medians" but its Frobenius rows are means. "Best in Frobenius
+error at every window size" is false at n/d = 100, the one size the table
+leaves out (0.0356 against Ledoit-Wolf's 0.0348); "worst by sixteen orders of
+magnitude" is fourteen (5e15 against 18: sixteen was kappa's own exponent);
+and "agree to a couple of percent" past n/d = 20 holds for kappa only, the
+Frobenius errors there are 8% apart. theory/derivations.md carried the same
+table and sentences and is corrected with it. The log came back
+byte-identical on a second run and the figure did not move.
+
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
 """
@@ -111,11 +125,12 @@ INSTRUMENTED = {
     "ais": "10.",
     "sghmc": "11.",
     "heavy_tails": "12.",
+    "dense_metric_estimation": "13.",
 }
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
 NOT_YET = [
-    "13.", "14.", "15.",
+    "14.", "15.",
 ]
 
 
@@ -1199,3 +1214,171 @@ def test_section_12_bounded_functional_holds_root_n():
     """'The bounded functional holds n^-1/2 at every nu including the Cauchy.'"""
     rates = [r["P(|X|<=1) rate"] for r in log("heavy_tails")["rates"]]
     assert all(abs(r + 0.5) < 0.05 for r in rates), rates
+
+
+# -- Sec. 13: estimating a dense metric (experiments/dense_metric_estimation.py)
+
+ESTIMATORS = ["sample", "stan", "ledoit-wolf"]
+
+
+def _estimator_table() -> dict[tuple[float, str], list[str]]:
+    """§13's first table as (n/d, 'frob' | 'kappa') -> the three cells.
+
+    Each window size is two rows and the second leaves its first cell blank,
+    so ``row`` cannot address it; this carries the n/d down.
+    """
+    out, nd = {}, None
+    for ln in section("13.").splitlines():
+        if not ln.startswith("|"):
+            continue
+        cs = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if cs[1] == "rel. Frobenius error":
+            nd = float(cs[0])
+            out[(nd, "frob")] = cs[2:]
+        elif cs[0] == "" and cs[1].startswith("$\\kappa"):
+            out[(nd, "kappa")] = cs[2:]
+    return out
+
+
+def _kappa_cell(measured, cell: str, what: str) -> None:
+    """'$\\infty$', '$5\\times10^{15}$', '$1.1\\times10^3$' or a plain number."""
+    cell = cell.replace("**", "")
+    if cell == "$\\infty$":
+        assert measured == "inf", f"{what}: README says infinite, log {measured!r}"
+        return
+    m = re.fullmatch(r"\$([\d.]+)\\times10\^\{?(\d+)\}?\$", cell)
+    if m:
+        assert_rounds_to(measured / 10 ** int(m.group(2)), m.group(1), what)
+    else:
+        assert_rounds_to(measured, cell, what)
+
+
+def _quality() -> dict[tuple[float, str], dict]:
+    return {(r["n/d"], r["estimator"]): r
+            for r in log("dense_metric_estimation")["estimator_quality"]}
+
+
+@pytest.mark.parametrize("nd", [0.5, 1.0, 2.0, 20.0])
+def test_section_13_estimator_table(nd):
+    q = _quality()
+    table = _estimator_table()
+    assert sorted({k[0] for k in table}) == [0.5, 1.0, 2.0, 20.0]
+    frob, kappa = table[(nd, "frob")], table[(nd, "kappa")]
+    assert len(frob) == len(kappa) == 3
+    for est, f, k in zip(ESTIMATORS, frob, kappa):
+        assert_rounds_to(q[(nd, est)]["frob_err"], f.replace("**", ""),
+                         f"§13 n/d={nd} {est} Frobenius")
+        _kappa_cell(q[(nd, est)]["kappa"], k, f"§13 n/d={nd} {est} kappa")
+    # bold marks the winner of each row: least error, least kappa
+    best_f = min(ESTIMATORS, key=lambda e: q[(nd, e)]["frob_err"])
+    best_k = min(ESTIMATORS, key=lambda e: float(q[(nd, e)]["kappa"]))
+    assert [c.startswith("**") for c in frob] == [e == best_f for e in ESTIMATORS]
+    assert [c.startswith("**") for c in kappa] == [e == best_k for e in ESTIMATORS]
+
+
+def test_section_13_estimator_prose():
+    q = _quality()
+    body = " ".join(section("13.").split())
+    nds = sorted({k[0] for k in q})
+    # "the best of the three in Frobenius error at every window size up to
+    # n/d = 20" -- and not past it, or the qualifier would be needless
+    upto = float(quoted(body, r"at every window size up to \$n/d = (\d+)\$"))
+    for nd in nds:
+        best = min(ESTIMATORS, key=lambda e: q[(nd, e)]["frob_err"])
+        assert (best == "sample") == (nd <= upto), (nd, best)
+    # "worst by fourteen orders of magnitude as a metric at n = d
+    # (5x10^15 against Ledoit-Wolf's 18; at n/d = 0.5 it is not a metric at all)"
+    words = {"thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16}
+    orders = words[quoted(body, r"worst by (\w+) orders of magnitude\*\* as a metric")]
+    s, lw = q[(1.0, "sample")]["kappa"], q[(1.0, "ledoit-wolf")]["kappa"]
+    assert int(np.floor(np.log10(s / lw))) == orders
+    assert s == max(float(q[(1.0, e)]["kappa"]) for e in ESTIMATORS)
+    assert_rounds_to(s / 1e15, quoted(body, r"\(\$([\d.]+)\\times10\^\{15\}\$ against"),
+                     "§13 sample kappa at n = d")
+    assert_rounds_to(lw, quoted(body, r"against Ledoit–Wolf's (\d+);"),
+                     "§13 Ledoit-Wolf kappa at n = d")
+    assert q[(0.5, "sample")]["kappa"] == "inf"
+    # "By n/d = 20 the three agree in kappa to about 1% (2% at n/d = 100, where
+    # the shrunk estimators also edge ahead in Frobenius error, 0.035 against 0.036)"
+    def spread(nd):
+        ks = [q[(nd, e)]["kappa"] for e in ESTIMATORS]
+        return 100 * (max(ks) / min(ks) - 1)
+    assert_rounds_to(spread(20.0), quoted(body, r"agree in \$\\kappa\$ to about (\d+)%"),
+                     "§13 kappa spread at n/d = 20")
+    assert_rounds_to(spread(100.0), quoted(body, r"\((\d+)% at \$n/d = 100\$"),
+                     "§13 kappa spread at n/d = 100")
+    shrunk, raw = re.search(r"Frobenius error, ([\d.]+) against ([\d.]+)\)", body).groups()
+    for e in ("stan", "ledoit-wolf"):
+        assert_rounds_to(q[(100.0, e)]["frob_err"], shrunk, f"§13 n/d=100 {e}")
+    assert_rounds_to(q[(100.0, "sample")]["frob_err"], raw, "§13 n/d=100 sample")
+
+
+def test_section_13_dimension_sweep_prose():
+    rows = {r["d"]: r for r in log("dense_metric_estimation")["dimension_sweep"]}
+    body = " ".join(section("13.").split())
+    lo = re.search(r"degrades from ([\d.]+) \(\$d=(\d+)\$\) to ([\d.]+) \(\$d=(\d+)\$, "
+                   r"where \$n/d = ([\d.]+)\$\)", body)
+    k_lo, d_lo, k_hi, d_hi, nd = lo.groups()
+    assert_rounds_to(rows[int(d_lo)]["kappa_dense_est"], k_lo, "§13 dense kappa, small d")
+    assert_rounds_to(rows[int(d_hi)]["kappa_dense_est"], k_hi, "§13 dense kappa, large d")
+    assert_rounds_to(rows[int(d_hi)]["n/d"], nd, "§13 n/d at the largest d")
+    a, b = re.search(r"\$\\kappa\(R\)\$ grows faster \((\d+) → (\d+)\)", body).groups()
+    assert_rounds_to(rows[int(d_lo)]["kappa_diag"], a, "§13 kappa(R), small d")
+    assert_rounds_to(rows[int(d_hi)]["kappa_diag"], b, "§13 kappa(R), large d")
+    peak, d_peak = re.search(r"\*rises\* to \$\\approx (\d+)\$ at \$d = (\d+)\$", body).groups()
+    assert max(rows.values(), key=lambda r: r["gain"])["d"] == int(d_peak)
+    assert_rounds_to(rows[int(d_peak)]["gain"], peak, "§13 peak gain")
+    assert_rounds_to(rows[int(d_hi)]["gain"],
+                     quoted(body, r"and is still (\d+) at \$d = \d+\$"), "§13 gain, large d")
+    # "the estimate does not fall apart first": the dense estimate wins everywhere
+    assert all(r["kappa_dense_est"] < r["kappa_diag"] for r in rows.values())
+
+
+SAMPLER_ROWS = {"identity": "identity", "diagonal": "diagonal",
+                "dense (Stan ridge)": "dense (stan)",
+                "dense (Ledoit–Wolf)": "dense (LW)"}
+
+
+@pytest.mark.parametrize("label", sorted(SAMPLER_ROWS))
+def test_section_13_sampler_table(label):
+    r = {x["metric"]: x for x in log("dense_metric_estimation")["sampler"]}
+    m = r[SAMPLER_ROWS[label]]
+    cells = row(section("13."), label)
+    assert len(cells) == 4
+    assert_rounds_to(m["kappa"], cells[0], f"§13 {label} kappa")
+    assert int(cells[1]) == m["best_L"], label
+    assert_rounds_to(m["ess_per_kgrad"], cells[2], f"§13 {label} ESS/kgrad at best L")
+    assert_rounds_to(m["at_L=25"], cells[3], f"§13 {label} ESS/kgrad at L = 25")
+
+
+def test_section_13_sampler_prose():
+    d = log("dense_metric_estimation")
+    r = {x["metric"]: x for x in d["sampler"]}
+    body = " ".join(section("13.").split())
+    grid = quoted(body, r"swept over \$L \\in \\\{([\d,]+)\\\}\$")
+    assert [int(x) for x in grid.split(",")] == d["lengths"]
+    # the bold cell is the measured best
+    best = max(r.values(), key=lambda x: x["ess_per_kgrad"])["metric"]
+    assert best == "dense (stan)"
+    assert row(section("13."), "dense (Stan ridge)")[2] in quoted(
+        section("13."), r"\| dense \(Stan ridge\) \|[^|]*\|[^|]*\| (\*\*[\d.]+\*\*) \|")
+    stan, ident = r["dense (stan)"], r["identity"]
+    assert_rounds_to(stan["ess_per_kgrad"] / ident["ess_per_kgrad"],
+                     quoted(body, r"\$([\d.]+)\\times\$ over the identity metric"),
+                     "§13 dense gain at each metric's best L")
+    assert_rounds_to(stan["at_L=25"] / ident["at_L=25"],
+                     quoted(body, r"wants, \$([\d.]+)\\times\$ at a shared one"),
+                     "§13 dense gain at a shared L")
+    assert int(quoted(body, r"at a shared \$L=(\d+)\$ \|")) == 25
+    # "sqrt(kappa) predicts an L ratio of 15; the measured one is 25/2 = 12.5"
+    assert_rounds_to(np.sqrt(ident["kappa"] / stan["kappa"]),
+                     quoted(body, r"predicts an \$L\$ ratio of (\d+);"), "§13 sqrt-kappa L ratio")
+    num, den, val = re.search(r"the measured one is \$(\d+)/(\d+) = ([\d.]+)\$", body).groups()
+    assert (int(num), int(den)) == (ident["best_L"], stan["best_L"])
+    assert float(val) == ident["best_L"] / stan["best_L"]
+    # "The diagonal metric landing *below* the identity"
+    assert r["diagonal"]["ess_per_kgrad"] < ident["ess_per_kgrad"]
+    # "a target built to have kappa(R) = 324"
+    assert_rounds_to(d["kappa_R"], quoted(body, r"built to have \$\\kappa\(R\) = (\d+)\$"),
+                     "§13 kappa(R)")
+    assert_rounds_to(d["kappa_R"], row(section("13."), "identity")[0], "§13 identity kappa")

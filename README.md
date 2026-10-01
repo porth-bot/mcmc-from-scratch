@@ -736,7 +736,8 @@ and is a singularity guard rather than shrinkage; and Ledoit–Wolf, the
 closed-form Frobenius-optimal shrinkage toward a scaled identity (derived in
 theory §4.11).
 
-**The two losses rank them oppositely.** Medians over 40 windows, $d = 10$:
+**The two losses rank them oppositely.** Over 40 windows, $d = 10$; the
+Frobenius rows are the mean over windows and the $\kappa$ rows the median:
 
 | $n/d$ | | sample $S$ | Stan ridge | Ledoit–Wolf |
 |---|---|---|---|---|
@@ -750,13 +751,15 @@ theory §4.11).
 |     | $\kappa$ | 2.18 | 2.18 | **2.16** |
 
 The raw sample covariance is the **best** of the three in Frobenius error at
-every window size and the **worst by sixteen orders of magnitude** as a metric —
-for the same reason it wins: truncating small directions to zero is close in
-squared error and fatal to a quantity that divides by the smallest eigenvalue.
-An estimator tuned for a sum-of-squares loss owes nothing to a
-ratio-of-eigenvalues loss. Past $n/d \approx 20$ the three agree to a couple of
-percent, which is why `dense_shrinkage="stan"` is the default and Ledoit–Wolf is
-what to reach for on a short window.
+every window size up to $n/d = 20$ and the **worst by fourteen orders of
+magnitude** as a metric at $n = d$ ($5\times10^{15}$ against Ledoit–Wolf's 18;
+at $n/d = 0.5$ it is not a metric at all) — for the same reason it wins:
+truncating small directions to zero is close in squared error and fatal to a
+quantity that divides by the smallest eigenvalue. An estimator tuned for a sum-of-squares loss owes nothing to a
+ratio-of-eigenvalues loss. By $n/d = 20$ the three agree in $\kappa$ to about
+1% (2% at $n/d = 100$, where the shrunk estimators also edge ahead in Frobenius
+error, 0.035 against 0.036), which is why `dense_shrinkage="stan"` is the
+default and Ledoit–Wolf is what to reach for on a short window.
 
 **Estimation cost against algebraic gain.** Fix the window at 400 draws and grow
 $d$: the achieved $\kappa$ degrades from 1.28 ($d=2$) to 7.2 ($d=128$, where
@@ -776,12 +779,12 @@ $L \in \{1,2,5,10,25,50\}$:
 |---|---|---|---|---|
 | identity | 324 | 25 | 16.8 | 16.8 |
 | diagonal | 322 | 25 | 15.5 | 15.5 |
-| dense (Stan ridge) | 1.36 | 2 | **165.0** | 18.5 |
+| dense (Stan ridge) | 1.35 | 2 | **165.0** | 18.5 |
 | dense (Ledoit–Wolf) | 1.37 | 2 | 162.9 | 18.3 |
 
-$9.8\times$ over the identity metric when each gets the $L$ it wants, $1.1\times$
+$9.9\times$ over the identity metric when each gets the $L$ it wants, $1.1\times$
 at a shared one. ($\sqrt\kappa$ predicts an $L$ ratio of 15; the measured one is
-$25/2 \approx 12$.) The diagonal metric landing *below* the identity is not
+$25/2 = 12.5$.) The diagonal metric landing *below* the identity is not
 noise: this target's marginals are already unit variance, so there is no scale
 disparity for a diagonal to remove, and what is left is warmup spent on a metric
 that does nothing — §7's claim in its least flattering form.
@@ -790,14 +793,14 @@ that does nothing — §7's claim in its least flattering form.
 
 Everything above is on a target built to have $\kappa(R) = 324$. §14 puts the
 same code on the posterior §7's limitation was measured on, where $\kappa(R)$
-is 1.42, and the $9.8\times$ becomes nothing — which is the useful half of
+is 1.42, and the $9.9\times$ becomes nothing — which is the useful half of
 knowing what a dense metric is for.
 
 ### 14. Eight schools, dense vs diagonal — the answer is no (`experiments/eight_schools_metric.py`)
 
 §7 measured a residual and named a cause: $\log\tau$ gains only $2.4\times$ from
 the diagonal metric because a diagonal "cannot rotate". §13 built the dense
-metric that can, and got $9.8\times$ on a target with correlation to remove.
+metric that can, and got $9.9\times$ on a target with correlation to remove.
 This section runs it on the posterior the residual was measured on. Three
 studies, in the order that lets the third explain the second.
 
@@ -1170,7 +1173,7 @@ them byte-for-byte.
 - Trajectory length is now adaptive (NUTS, done, §9): the U-turn criterion
   removes the fixed-$L$ knob and buys ~4–6× the ESS per gradient. The *dense*
   metric that used to sit here as the next step is done too (§13, §14) and the
-  result is a negative worth keeping: it is worth $9.8\times$ on a target with
+  result is a negative worth keeping: it is worth $9.9\times$ on a target with
   correlation to remove and **nothing** on eight schools, whose $\kappa(R)$ is
   1.42. What is left after it is position-dependent curvature — the local
   $\kappa$ of the whitened Hessian swings $4.1\times$ across the posterior where

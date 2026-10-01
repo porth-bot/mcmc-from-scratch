@@ -608,9 +608,10 @@ per draw.
 squared Frobenius error. HMC does not care about squared error; by Sec. 4.10 it
 cares about $\kappa(\hat\Sigma\,\Sigma_\pi^{-1})$, the whitened Hessian's
 eigenvalue *ratio*. These are different objectives and they rank the estimators
-differently — not subtly, but by sixteen orders of magnitude. Measured on an
-AR(1) Gaussian, $\rho = 0.95$, $d = 10$
-(`experiments/dense_metric_estimation.py`, medians over 40 windows;
+differently — not subtly, but by fourteen orders of magnitude at $n = d$.
+Measured on an AR(1) Gaussian, $\rho = 0.95$, $d = 10$
+(`experiments/dense_metric_estimation.py`, 40 windows, Frobenius error the
+mean and $\kappa$ the median;
 $\kappa(R) = 324$ is the best any diagonal can do, $\kappa = 1$ the exact dense):
 
 | $n/d$ | | sample $S$ | Stan ridge | Ledoit–Wolf |
@@ -625,18 +626,19 @@ $\kappa(R) = 324$ is the best any diagonal can do, $\kappa = 1$ the exact dense)
 |    | $\kappa$ | 2.18 | 2.18 | **2.16** |
 
 **The raw sample covariance is the best of the three in Frobenius error at
-every window size and the worst by any distance as a metric.** At $n \le d$ it
-is a matrix with zero eigenvalues; truncating the small directions to zero is a
+every window size up to $n/d = 20$ and the worst by any distance as a
+metric.** At $n \le d$ it is a matrix with zero eigenvalues; truncating the small directions to zero is a
 *good* way to be close in squared error and a catastrophic way to build a
 metric, since $\kappa$ divides by the smallest eigenvalue. This is the reason
 the two columns exist in the table separately, and it is worth stating as a
 rule: an estimator chosen for a sum-of-squares loss is under no obligation to
 be good in a ratio-of-eigenvalues loss.
 
-At $n/d \gtrsim 20$ all three agree to within a couple of percent, which is why
+At $n/d \gtrsim 20$ all three agree in $\kappa$ to within 2%, which is why
 `dense_shrinkage="stan"` is the default — it is the choice that does not change
 a well-sampled window — and Ledoit–Wolf is what to reach for when the window is
-short relative to $d$, where it is better by a factor of $20$ and up.
+short relative to $d$, where it is better by a factor of $20$ and up at
+$n \le d$ (and $2\times$ at $n/d = 2$).
 
 **Estimation cost against algebraic gain.** Fix the window at $400$ draws and
 grow $d$. The dense metric's achieved $\kappa$ degrades — $1.28$ at $d = 2$ to
@@ -661,12 +663,12 @@ $L \in \{1,2,5,10,25,50\}$:
 |---|---|---|---|---|
 | identity | 324 | 25 | 16.8 | 16.8 |
 | diagonal | 322 | 25 | 15.5 | 15.5 |
-| dense (Stan ridge) | 1.36 | 2 | **165.0** | 18.5 |
+| dense (Stan ridge) | 1.35 | 2 | **165.0** | 18.5 |
 | dense (Ledoit–Wolf) | 1.37 | 2 | 162.9 | 18.3 |
 
-$9.8\times$ over the identity metric when each gets the $L$ it wants; $1.1\times$
+$9.9\times$ over the identity metric when each gets the $L$ it wants; $1.1\times$
 at a shared $L = 25$. The $L$ ratio predicted by $\sqrt{\kappa}$ is
-$\sqrt{324/1.36} \approx 15$; the measured one is $25/2 \approx 12$, close
+$\sqrt{324/1.35} \approx 15$; the measured one is $25/2 = 12.5$, close
 enough on a grid this coarse to say the mechanism is the one named.
 
 The diagonal metric coming in *below* the identity is not noise about zero: the
