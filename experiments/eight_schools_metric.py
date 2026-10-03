@@ -8,7 +8,7 @@ marginals, it cannot rotate, so the funnel curvature in (log tau, eta)
 survives... that residual is exactly what a dense metric or NUTS is for."
 
 Sec. 13 then built the dense metric and measured, on an AR(1) Gaussian, that it
-is worth 9.8x when there is correlation to remove. This section puts it on the
+is worth 9.9x when there is correlation to remove. This section puts it on the
 posterior the limitation was measured on. Three studies, in the order that lets
 the third explain the second:
 
@@ -35,12 +35,12 @@ the third explain the second:
      comparing it against the dense-vs-diagonal difference says which of the
      two effects the residual in Sec. 7 actually is.
 
-Run:  python experiments/eight_schools_metric.py
+Run:  python experiments/eight_schools_metric.py   (~5-6 min)
 """
 
 import numpy as np
 
-from common import plt, print_table, savefig
+from common import plt, print_table, save_results, savefig
 from mcmc.adapt import whitened_condition_numbers
 from mcmc.diagnostics import ess, integrated_autocorr_time, split_rhat
 from mcmc.hmc import hmc
@@ -219,6 +219,7 @@ def compare_at(sweep, cov, L):
             taus = [p[cname][0] for p in cell]
             row[cname] = float(np.median(taus))
             row[f"{cname} range"] = f"{min(taus):.2f}-{max(taus):.2f}"
+            row[f"{cname} seeds"] = taus
         rows.append(row)
     return rows
 
@@ -244,6 +245,7 @@ def section_7_gains(sweep, L=20):
             "adapted ESS/kg": float(np.median(ada)),
             "gain (median)": float(np.median(per_seed)),
             "gain range": f"{min(per_seed):.1f}-{max(per_seed):.1f}",
+            "gain seeds": per_seed,
         })
     return rows
 
@@ -413,12 +415,14 @@ def main():
           "Geyer's tau = 1 floor, so the\nequal ESS/kgrad there is four bounds "
           f"coinciding, not a measured tie. L = {Lc} is the\nlongest trajectory "
           "at which no median tau is clamped; that is where they can be ranked:")
-    print_table(compare_at(sweep, ref_cov, Lc),
+    rows_lc = compare_at(sweep, ref_cov, Lc)
+    print_table(rows_lc,
                 ["metric"] + [k for c in COORDS for k in (c, f"{c} range")])
 
     print("\nSec. 7's diagonal-over-identity gains, re-measured at "
           f"{N_SEEDS} seeds (L = 20):")
-    print_table(section_7_gains(sweep),
+    rows_7 = section_7_gains(sweep)
+    print_table(rows_7,
                 ["coordinate", "identity ESS/kg", "adapted ESS/kg",
                  "gain (median)", "gain range"])
 
@@ -439,15 +443,32 @@ def main():
         target_accept=0.9, adapt_mass="dense")
     est_cov = est.extras["inv_mass"]
     iu = np.triu_indices(model.dim, 1)
+    sd_err = float(np.abs(np.sqrt(np.diag(est_cov)) / np.sqrt(np.diag(ref_cov)) - 1).max())
+    corr_r = float(np.corrcoef(correlation(est_cov)[iu], correlation(ref_cov)[iu])[0, 1])
+    max_r = float(np.abs(correlation(ref_cov)[iu]).max())
     print(f"\nwarmup's estimated covariance vs the reference: sd within "
-          f"{np.abs(np.sqrt(np.diag(est_cov)) / np.sqrt(np.diag(ref_cov)) - 1).max():.1%}, "
-          f"off-diagonal correlations agree at r = "
-          f"{np.corrcoef(correlation(est_cov)[iu], correlation(ref_cov)[iu])[0, 1]:.2f} "
-          f"(over entries whose largest magnitude is "
-          f"{np.abs(correlation(ref_cov)[iu]).max():.3f}, so what agrees is the "
-          "absence of structure).\nThe estimate is not the problem.")
+          f"{sd_err:.1%}, off-diagonal correlations agree at r = {corr_r:.2f} "
+          f"(over entries whose largest magnitude is {max_r:.3f}, so what agrees "
+          "is the absence of structure).\nThe estimate is not the problem.")
 
     make_figure(ref_cov, est_cov, sweep, kappas, z, bin_rows, edges)
+    worst_by_L = {
+        name: [float(np.median([p["_worst"] for p in sweep[(name, L)]]))
+               for L in LENGTHS]
+        for name, _ in _configs(ref_cov)}
+    save_results("eight_schools_metric", {
+        "seed": SEED, "n_chains": N_CHAINS, "n_seeds": N_SEEDS,
+        "lengths": LENGTHS, "thin": THIN,
+        "reference": diag, "reference_sd": sd,
+        "max_abs_corr": max_r, "kappa_R": kappa_R,
+        "available_rotation": rows_a,
+        "sweep": rows_b, "worst_ess_per_kgrad_by_L": worst_by_L,
+        "discriminating_L": Lc, "compare_at_L": rows_lc,
+        "section_7_gains": rows_7,
+        "local_conditioning": rows_c, "non_pd_fraction": nonpd,
+        "by_log_tau": bin_rows,
+        "warmup_estimate": {"max_sd_rel_err": sd_err, "corr_r": corr_r},
+    })
 
 
 if __name__ == "__main__":
