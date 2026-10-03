@@ -331,7 +331,7 @@ The metric widens $\mu$ and the $\eta_j$ — the coordinates the unit step size
 under-served — driving them to near-independence ($\tau_{\text{int}}\to 1$, hence
 the shared ceiling of 47.8). But $\log\tau$ gains only 2.4×, and that residual is
 the honest limit of the cheap fix. The three gains hold up at five seeds (§14
-re-measures them at 1.27× / 2.79× / 13.3×, with $\log\tau$'s spanning 2.2–3.7
+re-measures them at 1.26× / 2.79× / 13.3×, with $\log\tau$'s spanning 2.2–3.7
 across seeds, so the single-seed 2.4 above is inside its own spread).
 
 What the residual *is* was asserted here and is now measured, and the assertion
@@ -872,17 +872,19 @@ draw instead of once at a Gaussian approximation:
 |---|---|---|---|---|
 | identity | 57.6 | 28.7 | 163.0 | 5.7 |
 | diagonal | 2.38 | 1.46 | 6.60 | 4.5 |
-| dense | 2.23 | 1.33 | 6.07 | 4.6 |
+| dense | 2.23 | 1.32 | 6.07 | 4.6 |
 
 Cut by $\log\tau$, the same numbers say it plainly — the median local $\kappa$
-the diagonal achieves runs 3.35 → 1.88 → 1.46 → 2.32 → 5.95 across quintiles, a
+the diagonal achieves runs 3.35 → 1.88 → 1.46 → 2.31 → 5.95 across quintiles, a
 $4.1\times$ swing, while the best the rotation buys in any quintile is
 $1.17\times$:
 
 <p align="center"><img src="figures/eight_schools_metric.png" width="760"></p>
 
-**The residual §7 named is position, not rotation.** It is $4\times$ larger than
-anything a global metric of any shape can address, and 2.04% of posterior draws
+**The residual §7 named is position, not rotation.** Position moves the
+conditioning $4.1\times$ across quintiles; the rotation, the dense metric's
+whole advantage over the diagonal, moves it at most $1.17\times$ in any one of
+them. And 2.04% of posterior draws
 have an indefinite $-H$ — a saddle, which no positive-definite mass matrix
 conditions at all. The eta block of the Hessian makes the mechanism explicit:
 it is diagonal with entries $1 + \tau^2/\sigma_j^2$, so the curvature there is a

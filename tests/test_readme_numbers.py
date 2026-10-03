@@ -12,9 +12,9 @@ experiment writes the quantities its section quotes to ``logs/<name>.json``
 beside its figures, and ``reproduce.sh`` reports a log that comes back
 different the same way it reports a figure. This file is the second half.
 
-**It covers twelve of the fifteen sections so far** (§§1-12; the §5, §7,
+**It covers fourteen of the fifteen sections so far** (§§1-14; the §5, §7,
 §9 and §10 scripts take about a minute each, §11's about ten seconds, §12's
-about twenty).
+about twenty, §13's about 75 seconds and §14's five to six minutes).
 ``NOT_YET`` names the rest, and
 ``test_every_result_section_is_either_instrumented_or_listed`` fails when a
 section is added or renamed, so the gap is stated rather than discovered.
@@ -94,6 +94,19 @@ Frobenius errors there are 8% apart. theory/derivations.md carried the same
 table and sentences and is corrected with it. The log came back
 byte-identical on a second run and the figure did not move.
 
+**§14, eight schools dense vs diagonal: three cells rounded twice, one
+sentence that divided where it should have listed.** Two table cells and one
+number §7 quotes from this run were rounded by the script and then again by
+hand, upward: the dense metric's 10th-percentile local kappa (1.3249, printed
+1.325, typed 1.33), the fourth log-tau quintile (2.3150, typed 2.32), and mu's
+re-measured diagonal gain in §7 (1.2649, typed 1.27x). The bold conclusion
+said the position residual "is 4x larger than anything a global metric can
+address": the run gives a 4.08x swing against a best rotation gain of 1.17x,
+which is 3.5x, and the 1.17x is the dense metric over the diagonal, not a
+bound over every metric. It now states the two numbers. Everything else
+held, including the null itself (dense 1.06x over diagonal at L = 3, inside
+both arms' seed ranges). The script also still called §13's gain 9.8x.
+
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
 """
@@ -126,11 +139,12 @@ INSTRUMENTED = {
     "sghmc": "11.",
     "heavy_tails": "12.",
     "dense_metric_estimation": "13.",
+    "eight_schools_metric": "14.",
 }
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
 NOT_YET = [
-    "14.", "15.",
+    "15.",
 ]
 
 
@@ -1072,13 +1086,15 @@ def _dof_label(dof: float) -> str:
     return "30" if dof == 30.0 else f"{dof:g}" if dof % 1 else f"{dof:.1f}"
 
 
-def _table(header: str) -> dict[str, list[str]]:
-    """The §12 table whose header row starts with `header`, as label -> cells.
+def _table(header: str, sec: str = "12.") -> dict[str, list[str]]:
+    """The table in section `sec` whose header row starts with `header`, as
+    label -> cells.
 
-    §12's three tables share their first column (the dof), so ``row`` cannot
-    tell them apart; this reads one table at a time.
+    §12's three tables share their first column (the dof), and §14's four
+    share their row labels, so ``row`` cannot tell them apart; this reads one
+    table at a time.
     """
-    lines = section("12.").splitlines()
+    lines = section(sec).splitlines()
     starts = [i for i, ln in enumerate(lines) if ln.startswith(header)]
     assert len(starts) == 1, f"table {header!r} found {len(starts)} times"
     out = {}
@@ -1382,3 +1398,169 @@ def test_section_13_sampler_prose():
     assert_rounds_to(d["kappa_R"], quoted(body, r"built to have \$\\kappa\(R\) = (\d+)\$"),
                      "§13 kappa(R)")
     assert_rounds_to(d["kappa_R"], row(section("13."), "identity")[0], "§13 identity kappa")
+
+
+# -- Sec. 14: eight schools, dense vs diagonal (experiments/eight_schools_metric.py)
+
+ROTATION_TABLE = "| metric | $\\kappa$ of the whitened Hessian"
+SWEEP_TABLE = "| metric | best $L$"
+TAU_TABLE = "| metric | $\\tau$ for $\\log\\tau$"
+LOCAL_TABLE = "| metric | median local $\\kappa$"
+ROTATION_ROWS = {"identity": "identity", "best possible diagonal": "best diagonal",
+                 "exact dense": "exact dense"}
+SWEEP_ROWS = ["identity", "diagonal (adapted)", "dense (adapted)",
+              "diagonal (oracle)", "dense (oracle)"]
+
+
+def _by_metric(key: str) -> dict[str, dict]:
+    return {r["metric"]: r for r in log("eight_schools_metric")[key]}
+
+
+@pytest.mark.parametrize("label", sorted(ROTATION_ROWS))
+def test_section_14_rotation_table(label):
+    r = _by_metric("available_rotation")[ROTATION_ROWS[label]]
+    cells = _table(ROTATION_TABLE, "14.")[label]
+    assert len(cells) == 1
+    assert_rounds_to(r["kappa"], cells[0], f"§14 A {label} kappa")
+
+
+def test_section_14_rotation_prose():
+    d = log("eight_schools_metric")
+    body = " ".join(section("14.").split())
+    # "The largest off-diagonal correlation in this posterior is 0.090", and the
+    # same number again where the warmup estimate is discussed
+    assert_rounds_to(d["max_abs_corr"],
+                     quoted(body, r"largest off-diagonal correlation in this posterior is \$([\d.]+)\$"),
+                     "§14 max |r|")
+    assert_rounds_to(d["max_abs_corr"], quoted(body, r"whose largest magnitude is ([\d.]+),"),
+                     "§14 max |r| (second quote)")
+    # "a factor 1.42 in conditioning -- 1.19x in step size"
+    assert_rounds_to(d["kappa_R"], quoted(body, r"a factor ([\d.]+) in conditioning"),
+                     "§14 kappa(R)")
+    assert_rounds_to(np.sqrt(d["kappa_R"]), quoted(body, r"\$([\d.]+)\\times\$ in step size"),
+                     "§14 sqrt kappa(R)")
+    assert d["kappa_R"] == _by_metric("available_rotation")["best diagonal"]["kappa"]
+
+
+@pytest.mark.parametrize("label", SWEEP_ROWS)
+def test_section_14_sweep_table(label):
+    d = log("eight_schools_metric")
+    r = _by_metric("sweep")[label]
+    cells = _table(SWEEP_TABLE, "14.")[label]
+    assert len(cells) == 4
+    assert int(cells[0]) == r["best L"], label
+    assert_rounds_to(r["worst-coord ESS/kgrad"], cells[1], f"§14 B {label} best-L ESS/kgrad")
+    assert_rounds_to(r["at L=20"], cells[2], f"§14 B {label} ESS/kgrad at L = 20")
+    assert cells[3] == r["clamped"], label
+    # the "at L = 20" column is the sweep's own value at L = 20
+    assert r["at L=20"] == d["worst_ess_per_kgrad_by_L"][label][d["lengths"].index(20)]
+
+
+def test_section_14_sweep_prose():
+    d = log("eight_schools_metric")
+    rows = _by_metric("sweep")
+    body = " ".join(section("14.").split())
+    adapted = SWEEP_ROWS[1:]
+    # "The four adapted rows are identical at their best L" ... "every one of
+    # those 15 (seed, coordinate) cells is censored"
+    assert len({rows[n]["worst-coord ESS/kgrad"] for n in adapted}) == 1
+    n_cells = int(quoted(body, r"every one of those (\d+) \(seed, coordinate\) cells"))
+    assert all(rows[n]["clamped"] == f"{n_cells}/{n_cells}" for n in adapted)
+    assert rows["identity"]["clamped"] != f"{n_cells}/{n_cells}"
+    # "L = 3, the longest trajectory at which no median tau is clamped"
+    assert int(quoted(body, r"\$L = (\d+)\$, the longest trajectory")) == d["discriminating_L"]
+    # "its best is L=8, and it is *worse* at L=20 than at L=5"
+    by_L = dict(zip(d["lengths"], d["worst_ess_per_kgrad_by_L"]["identity"]))
+    assert int(quoted(body, r"its best is \$L=(\d+)\$")) == rows["identity"]["best L"]
+    assert by_L[20] < by_L[5]
+
+
+@pytest.mark.parametrize("label", SWEEP_ROWS)
+def test_section_14_tau_table(label):
+    r = _by_metric("compare_at_L")[label]
+    cells = _table(TAU_TABLE, "14.")[label]
+    assert len(cells) == 2
+    assert_rounds_to(r["log tau"], cells[0], f"§14 {label} median tau(log tau)")
+    lo, hi = re.fullmatch(r"([\d.]+)–([\d.]+)", cells[1]).groups()
+    assert_rounds_to(min(r["log tau seeds"]), lo, f"§14 {label} tau range low")
+    assert_rounds_to(max(r["log tau seeds"]), hi, f"§14 {label} tau range high")
+    assert r["log tau"] == float(np.median(r["log tau seeds"]))
+
+
+def test_section_14_dense_vs_diagonal_prose():
+    rows = _by_metric("compare_at_L")
+    body = " ".join(section("14.").split())
+    # "Dense leads diagonal by 1.06x on the binding coordinate, well inside
+    # either arm's seed range"
+    diag, dense = rows["diagonal (adapted)"], rows["dense (adapted)"]
+    assert_rounds_to(diag["log tau"] / dense["log tau"],
+                     quoted(body, r"Dense leads diagonal by \$([\d.]+)\\times\$"),
+                     "§14 dense lead over diagonal")
+    gap = diag["log tau"] - dense["log tau"]
+    for arm in (diag, dense):
+        assert gap < max(arm["log tau seeds"]) - min(arm["log tau seeds"])
+    # "handing it the true covariance changes nothing": the oracle pair is no
+    # further apart than the adapted pair
+    od, oe = rows["diagonal (oracle)"], rows["dense (oracle)"]
+    assert abs(od["log tau"] - oe["log tau"]) <= abs(gap)
+
+
+def test_section_14_warmup_estimate_prose():
+    w = log("eight_schools_metric")["warmup_estimate"]
+    body = " ".join(section("14.").split())
+    assert_rounds_to(100 * w["max_sd_rel_err"], quoted(body, r"marginal sds within ([\d.]+)%"),
+                     "§14 warmup sd error")
+    assert_rounds_to(w["corr_r"], quoted(body, r"reference's at \$r = ([\d.]+)\$"),
+                     "§14 warmup correlation agreement")
+
+
+@pytest.mark.parametrize("label", ["identity", "diagonal", "dense"])
+def test_section_14_local_conditioning_table(label):
+    r = _by_metric("local_conditioning")[label]
+    cells = _table(LOCAL_TABLE, "14.")[label]
+    assert len(cells) == 4
+    for key, cell in zip(["median kappa", "10th", "90th", "90th/10th"], cells):
+        assert_rounds_to(r[key], cell, f"§14 C {label} {key}")
+
+
+def test_section_14_residual_prose():
+    d = log("eight_schools_metric")
+    bins = d["by_log_tau"]
+    body = " ".join(section("14.").split())
+    # "the median local kappa the diagonal achieves runs 3.35 -> 1.88 -> ... "
+    seq = re.search(r"achieves runs ([\d.]+(?: → [\d.]+)+) across quintiles", body).group(1)
+    printed = seq.split(" → ")
+    assert len(printed) == len(bins)
+    for b, cell in zip(bins, printed):
+        assert_rounds_to(b["diagonal"], cell, f"§14 quintile {b['log tau bin']}")
+    diag = [b["diagonal"] for b in bins]
+    swing = max(diag) / min(diag)
+    assert_rounds_to(swing, quoted(body, r"a \$([\d.]+)\\times\$ swing"), "§14 swing")
+    rot = max(b["dense gain"] for b in bins)
+    assert_rounds_to(rot, quoted(body, r"in any quintile is \$([\d.]+)\\times\$"),
+                     "§14 best rotation gain")
+    # and the bold conclusion restates both, rather than dividing one by the other
+    assert_rounds_to(swing, quoted(body, r"Position moves the conditioning \$([\d.]+)\\times\$"),
+                     "§14 swing (conclusion)")
+    assert_rounds_to(rot, quoted(body, r"moves it at most \$([\d.]+)\\times\$ in any one"),
+                     "§14 best rotation gain (conclusion)")
+    # "2.04% of posterior draws have an indefinite -H"
+    assert_rounds_to(100 * d["non_pd_fraction"],
+                     quoted(body, r"([\d.]+)% of posterior draws have an indefinite"),
+                     "§14 non-PD fraction")
+
+
+def test_section_7_gains_as_remeasured_by_section_14():
+    """§7's text quotes §14's five-seed re-measurement of its three gains."""
+    g = {r["coordinate"]: r for r in log("eight_schools_metric")["section_7_gains"]}
+    body = " ".join(section("7.").split())
+    printed = re.search(r"re-measures them at ([\d.]+)× / ([\d.]+)× / ([\d.]+)×", body).groups()
+    for coord, cell in zip(["mu", "log tau", "eta_1"], printed):
+        assert_rounds_to(g[coord]["gain (median)"], cell, f"§7 via §14 {coord} gain")
+        assert g[coord]["gain (median)"] == float(np.median(g[coord]["gain seeds"]))
+    lo, hi = re.search(r"\$\\log\\tau\$'s spanning ([\d.]+)–([\d.]+)", body).groups()
+    seeds = g["log tau"]["gain seeds"]
+    assert_rounds_to(min(seeds), lo, "§7 via §14 log tau gain, low seed")
+    assert_rounds_to(max(seeds), hi, "§7 via §14 log tau gain, high seed")
+    # "so the single-seed 2.4 above is inside its own spread"
+    assert min(seeds) <= 2.4 <= max(seeds)
