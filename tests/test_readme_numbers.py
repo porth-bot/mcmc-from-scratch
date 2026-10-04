@@ -1753,7 +1753,9 @@ def test_section_15_step_size_table_and_prose():
     for n, a in u.items():
         L = d["lengths"][-1]
         assert a["eps"] == float(np.median([p["eps"] for p in d["per_seed"][f"{n} L={L}"]]))
-        assert a["v_mass"] == 0.5 * (1 + math.erf(a["unstable_below_v"] / (d["sigma_v"] * math.sqrt(2))))
+        # erf is libm's, which differs in the last bit between Python builds
+        mass_v = 0.5 * (1 + math.erf(a["unstable_below_v"] / (d["sigma_v"] * math.sqrt(2))))
+        assert a["v_mass"] == pytest.approx(mass_v, rel=1e-12)
     lo, hi = re.search(r"\*\*(\d+)–(\d+)% of the \$v\$-marginal", body).groups()
     mass = sorted(100 * a["v_mass"] for a in u.values())
     assert_rounds_to(mass[0], lo, "§15 unreachable mass low")
