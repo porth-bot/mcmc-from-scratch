@@ -38,7 +38,7 @@ And the fix, which is not a metric: the non-centered parameterization
 coordinates, and it mixes. Riemannian HMC is the general form of that trick.
 Neither is a mass matrix, which is the point.
 
-Run:  python experiments/funnel_metric.py
+Run:  python experiments/funnel_metric.py   (~3-4 min)
 """
 
 import math
@@ -211,7 +211,7 @@ def dense_over_diagonal(sweep, cov):
             r = [x["ess_kgrad"] / y["ess_kgrad"]
                  for x, y in zip(sweep[(a, L)], sweep[(b, L)])]
             rows.append({"L": L, "arms": tag, "dense/diagonal (median)": float(np.median(r)),
-                         "range": f"{min(r):.2f}-{max(r):.2f}",
+                         "range": f"{min(r):.2f}-{max(r):.2f}", "seeds": r,
                          "clamped": sum(1 for p in sweep[(a, L)] + sweep[(b, L)]
                                         if p["tau"] <= CLAMP)})
     return rows
@@ -368,7 +368,7 @@ def make_figure(cov, est, sweep, kappas, z, bin_rows, edges, vs, eps_curves,
 
 
 def main():
-    from common import print_table
+    from common import print_table, save_results
 
     model = NealsFunnel(dim=DIM, sigma_v=SIGMA_V)
     _, cov = model.moments()
@@ -395,11 +395,13 @@ def main():
     print("\n=== B. through the sampler, L swept per metric ===")
     sweep = sampler_sweep(model, cov)
     print()
-    print_table(summarize_sweep(sweep, cov),
+    rows_b = summarize_sweep(sweep, cov)
+    print_table(rows_b,
                 ["metric", "best L", "ESS(v)/kgrad", "tau(v)", "sd[v] (true 3.00)",
                  "min v", "eps", "divergent", "seed spread"])
     print("\ndense over diagonal, paired by seed:")
-    print_table(dense_over_diagonal(sweep, cov),
+    ratios = dense_over_diagonal(sweep, cov)
+    print_table(ratios,
                 ["L", "arms", "dense/diagonal (median)", "range", "clamped"])
     print("The oracle rows are the same *matrix* -- Sigma is diagonal, so the dense\n"
           "oracle is DenseMetric(diag(v)) against the diagonal oracle's\n"
@@ -408,7 +410,8 @@ def main():
           "different chains once an accept comparison lands on the other side of\n"
           "its uniform draw. The ratio column shows exactly that: 1.000 at L = 1\n"
           "and 2, then scattering by tens of percent. It is the noise floor of this\n"
-          "comparison, measured, and every adapted ratio sits inside it.")
+          "comparison, measured: compare each adapted median against it, and read\n"
+          "the per-seed range beside any that falls outside.")
 
     print("\n=== C. the local curvature, at exact draws ===")
     rows_c, kappas, z, pd_frac = local_conditioning(model, cov)
@@ -457,18 +460,34 @@ def main():
           "direction passes to v and its curvature is orbit-invariant.")
     adapted_eps = {n: float(np.median([p["eps"] for p in sweep[(n, LENGTHS[-1])]]))
                    for n in ("diagonal (adapted)", "dense (adapted)")}
+    unreachable = {}
     for n, e in adapted_eps.items():
         below = vs[eps_curves[n.split()[0]] < e]
         edge = float(below.max()) if below.size else float("-inf")
         # eps_max(v) increases with v, so {v : eps_max(v) < eps} is the neck
         # below `edge`, and the v-marginal is exactly N(0, sigma_v^2).
         frac = 0.5 * (1.0 + math.erf(edge / (SIGMA_V * math.sqrt(2.0))))
+        unreachable[n] = {"eps": e, "unstable_below_v": edge, "v_mass": frac}
         print(f"{n:20s} adapted to eps = {e:.4f}: the leapfrog is unstable below "
               f"v = {edge:+.2f},\n{'':22s}which is {frac:.2%} of the v-marginal it "
               "cannot integrate through.")
 
     make_figure(cov, est, sweep, kappas, z, bin_rows, edges, vs, eps_curves,
                 adapted_eps)
+    save_results("funnel_metric", {
+        "seed": SEED, "n_chains": N_CHAINS, "n_seeds": N_SEEDS, "dim": DIM,
+        "sigma_v": SIGMA_V, "lengths": LENGTHS, "thin": THIN,
+        "cov_v": cov[0, 0], "cov_x": cov[1, 1],
+        "available_rotation": available_rotation(cov),
+        "estimate_quality": estimate_quality(est, cov),
+        "sweep": rows_b,
+        "per_seed": {f"{name} L={L}": cell for (name, L), cell in sweep.items()},
+        "dense_over_diagonal": ratios,
+        "local_conditioning": rows_c, "pd_fraction": pd_frac,
+        "by_v": bin_rows, "v_edges": edges,
+        "position_swing": across, "max_rotation_gain": best_rot,
+        "step_size_limit": rows_d, "adapted_eps_unreachable": unreachable,
+    })
 
 
 if __name__ == "__main__":
