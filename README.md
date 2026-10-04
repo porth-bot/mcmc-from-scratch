@@ -937,8 +937,8 @@ exact $\Sigma$.
 
 | metric | best $L$ | ESS($v$)/1k grad | $\tau(v)$ | $\mathrm{sd}[v]$ (true 3.00) | adapted $\varepsilon$ | divergent |
 |---|---|---|---|---|---|---|
-| identity | 2 | 0.50 | 522 | 2.32 | 0.254 | 440 |
-| diagonal (adapted) | 1 | 0.76 | 518 | 1.75 | 0.139 | 55 |
+| identity | 2 | 0.49 | 522 | 2.32 | 0.254 | 440 |
+| diagonal (adapted) | 1 | 0.75 | 518 | 1.75 | 0.139 | 55 |
 | dense (adapted) | 1 | 0.48 | 859 | 1.78 | 0.179 | 145 |
 | diagonal (oracle) | 1 | 0.49 | 800 | 1.99 | 0.055 | 298 |
 | dense (oracle) | 10 | 0.61 | 149 | 2.48 | 0.043 | 235 |
@@ -949,14 +949,16 @@ funnel's characteristic failure: a chain that never enters the neck reports a
 short autocorrelation time *and a wrong answer*, so ranking these arms by ESS
 would rank five wrong answers. Every one of them is under-sampling the neck.
 
-Dense over diagonal, paired by seed, ranges 0.63–1.38 across $L$ with per-seed
+Dense over diagonal, paired by seed, has medians of 0.63–1.16 across $L$ with per-seed
 ranges that all straddle 1. The oracle pair calibrates that scatter, and this
 is the part worth reading: those two arms are the *same matrix*, since
 `DiagonalMetric(v)` and `DenseMetric(diag(v))` differ only in how they
 associate the same reals ([`mcmc/metric.py`](mcmc/metric.py)). Their ratio is
 therefore pure noise by construction — and it comes back 1.000 at $L = 1$ and
-2, then 1.383 at $L = 10$. **That is the resolution of this comparison,
-measured, and every adapted ratio sits inside it.**
+2, then 1.383 at $L = 10$ and 0.777 at $L = 40$. **That is the resolution of
+this comparison, measured: identical matrices come back up to $1.38\times$
+apart, either way, and every adapted median sits inside that band but one,
+$L = 25$'s 0.63, whose own four seeds run 0.14–1.30.**
 
 **C. Why.** The Hessian is closed form
 ([`mcmc/targets.py`](mcmc/targets.py)), so the local conditioning is available
@@ -991,7 +993,7 @@ step at each height. Along one scaling orbit of the funnel:
 | exact $\Sigma$ (diagonal = dense) | **0.004** | 0.157 | 0.289 |
 
 Note which way that runs. **The metric built from the exact covariance admits a
-neck step ten times smaller than doing nothing at all.** $\operatorname{Var}
+neck step $9.5\times$ smaller than doing nothing at all.** $\operatorname{Var}
 (x_i) = e^{\sigma_v^2/2} = 90$ is a number the *mouth* chose; whitening by it
 multiplies the neck's curvature by 90. §4.12's congruence says why this is not
 a fixable detail: $A(T_c z) = D_c A(z) D_c$, so a global metric slides the
@@ -1186,7 +1188,7 @@ them byte-for-byte.
   $1.42$; $-H$ is indefinite at *every* draw rather than 2% of them; position
   moves the local conditioning $19\times$ where the rotation moves it $1.000$;
   and the metric built from the exact covariance admits a step in the neck
-  $10\times$ *smaller* than the identity, because the marginal variance it
+  $9.5\times$ *smaller* than the identity, because the marginal variance it
   whitens by is a number the mouth chose. **Riemannian HMC**, a metric that
   varies with position, is the principled next step, and it is not
   implemented here. Two smaller gaps beside it: `mcmc/nuts.py` still carries its

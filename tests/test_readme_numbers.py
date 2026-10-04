@@ -12,10 +12,10 @@ experiment writes the quantities its section quotes to ``logs/<name>.json``
 beside its figures, and ``reproduce.sh`` reports a log that comes back
 different the same way it reports a figure. This file is the second half.
 
-**It covers fourteen of the fifteen sections so far** (§§1-14; the §5, §7,
-§9 and §10 scripts take about a minute each, §11's about ten seconds, §12's
-about twenty, §13's about 75 seconds and §14's five to six minutes).
-``NOT_YET`` names the rest, and
+**It covers all fifteen sections** (the §5, §7, §9 and §10 scripts take about
+a minute each, §11's about ten seconds, §12's about twenty, §13's about 75
+seconds, §14's five to six minutes and §15's three to four). ``NOT_YET`` is
+kept, empty, for the next section added, and
 ``test_every_result_section_is_either_instrumented_or_listed`` fails when a
 section is added or renamed, so the gap is stated rather than discovered.
 
@@ -107,6 +107,17 @@ bound over every metric. It now states the two numbers. Everything else
 held, including the null itself (dense 1.06x over diagonal at L = 3, inside
 both arms' seed ranges). The script also still called §13's gain 9.8x.
 
+**§15, the funnel: two cells rounded twice, a range from the wrong arm, and
+a ratio rounded to a round number.** The sweep table's ESS(v)/1k grad was
+0.50 for the identity metric (log 0.4947) and 0.76 for the adapted diagonal
+(0.7546, printed 0.755, rounded up by hand). "Dense over diagonal ranges
+0.63-1.38 across L" took its top end from the oracle pair; the adapted medians
+run 0.63-1.16. "Every adapted ratio sits inside" the oracle's resolution held
+for five of six L: identical matrices come back up to 1.38x apart, and L = 25's
+adapted 0.63 (diagonal ahead by 1.6x) is outside that band, with seeds from
+0.14 to 1.30. The section now says so. "A neck step ten times smaller", said
+again in Limitations, is 0.0414 / 0.0044 = 9.5x. The null itself holds.
+
 Pure stdlib plus numpy, so this runs wherever the rest of the suite does. No
 matplotlib, no experiment imports.
 """
@@ -114,6 +125,7 @@ matplotlib, no experiment imports.
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 
@@ -140,12 +152,11 @@ INSTRUMENTED = {
     "heavy_tails": "12.",
     "dense_metric_estimation": "13.",
     "eight_schools_metric": "14.",
+    "funnel_metric": "15.",
 }
 
 # Sections whose experiments do not write a log yet. Listed, not silent.
-NOT_YET = [
-    "15.",
-]
+NOT_YET: list[str] = []
 
 
 # -- reading the README and the logs -----------------------------------------
@@ -1564,3 +1575,195 @@ def test_section_7_gains_as_remeasured_by_section_14():
     assert_rounds_to(max(seeds), hi, "§7 via §14 log tau gain, high seed")
     # "so the single-seed 2.4 above is inside its own spread"
     assert min(seeds) <= 2.4 <= max(seeds)
+
+
+# -- Sec. 15: the funnel, dense vs diagonal (experiments/funnel_metric.py) ----
+
+F_ROTATION_TABLE = "| metric | $\\kappa$ of the whitened Hessian"
+F_ESTIMATE_TABLE = "| quantity | estimate | true |"
+F_SWEEP_TABLE = "| metric | best $L$"
+F_BINS_TABLE = "| $v$ bin |"
+F_STEP_TABLE = "| metric | $\\varepsilon_{\\max}$"
+
+
+def _f(key: str) -> dict[str, dict]:
+    return {r["metric"]: r for r in log("funnel_metric")[key]}
+
+
+def _rounds_from_half(measured: float, printed: str, what: str) -> None:
+    """Divergence counts are medians of four integers, so they can land on .5.
+    The README prints an integer; either neighbour is an honest rounding of a
+    half, nothing further is."""
+    ok = {math.floor(measured), math.ceil(measured)} if measured % 1 == 0.5 \
+        else {round(measured)}
+    assert int(printed) in ok, f"{what}: README {printed}, log {measured}"
+
+
+def test_section_15_headroom_table_and_covariance():
+    d = log("funnel_metric")
+    body = " ".join(section("15.").split())
+    rows = _f("available_rotation")
+    cells = _table(F_ROTATION_TABLE, "15.")
+    for label, key in ROTATION_ROWS.items():
+        assert_rounds_to(rows[key]["kappa"], cells[label][0], f"§15 A {label}")
+    # the best diagonal and the exact dense metric are the same matrix
+    assert rows["best diagonal"]["kappa"] == rows["exact dense"]["kappa"]
+    # "diag(9.00, 90.02 x 9)"
+    v, x, k = re.search(r"diag\}\(([\d.]+),\\ ([\d.]+) \\times (\d+)\)", body).groups()
+    assert_rounds_to(d["cov_v"], v, "§15 Var v")
+    assert_rounds_to(d["cov_x"], x, "§15 Var x_i")
+    assert int(k) == d["dim"] - 1
+
+
+def test_section_15_warmup_estimate_table():
+    q = log("funnel_metric")["estimate_quality"]
+    sd_v, sd_x, max_r = q[0], q[1], q[2]
+    cells = _table(F_ESTIMATE_TABLE, "15.")
+    assert_rounds_to(sd_v["estimate"], cells["$\\mathrm{sd}[v]$"][0], "§15 est sd[v]")
+    assert_rounds_to(3.0, cells["$\\mathrm{sd}[v]$"][1], "§15 true sd[v]")
+    assert_rounds_to(sd_x["estimate"], cells["median $\\mathrm{sd}[x_i]$"][0], "§15 est sd[x]")
+    true_x = sd_x["estimate"] / sd_x["ratio"]
+    assert_rounds_to(true_x, cells["median $\\mathrm{sd}[x_i]$"][1], "§15 true sd[x]")
+    label = "max $\\lvert r_{ij}\\rvert$"
+    assert_rounds_to(max_r["estimate"], cells[label][0], "§15 est max |r|")
+    body = " ".join(section("15.").split())
+    # "a warmup window comes back at 0.29x the truth"
+    assert_rounds_to(sd_x["ratio"], quoted(body, r"comes back at \$([\d.]+)\\times\$ the truth"),
+                     "§15 sd[x] ratio")
+
+
+@pytest.mark.parametrize("label", SWEEP_ROWS)
+def test_section_15_sweep_table(label):
+    r = _f("sweep")[label]
+    cells = _table(F_SWEEP_TABLE, "15.")[label]
+    assert len(cells) == 6
+    assert int(cells[0]) == r["best L"], label
+    for key, cell in zip(["ESS(v)/kgrad", "tau(v)", "sd[v] (true 3.00)", "eps"],
+                         cells[1:5]):
+        assert_rounds_to(r[key], cell, f"§15 B {label} {key}")
+    _rounds_from_half(r["divergent"], cells[5], f"§15 B {label} divergent")
+    # each summary cell is the median over seeds of the run it names
+    seeds = log("funnel_metric")["per_seed"][f"{label} L={r['best L']}"]
+    for key, k in [("tau(v)", "tau"), ("sd[v] (true 3.00)", "sd_v"), ("eps", "eps"),
+                   ("divergent", "div")]:
+        assert r[key] == float(np.median([p[k] for p in seeds])), (label, key)
+
+
+def test_section_15_sweep_prose():
+    d = log("funnel_metric")
+    body = " ".join(section("15.").split())
+    # "Five metrics, six trajectory lengths, four seeds"
+    assert len(SWEEP_ROWS) == 5 and len(d["lengths"]) == 6 and d["n_seeds"] == 4
+    # "sd[v] misses sigma_v = 3 at every metric and every L (1.75-2.69 across
+    # the whole sweep)": medians per (metric, L)
+    med = [float(np.median([p["sd_v"] for p in cell])) for cell in d["per_seed"].values()]
+    assert len(med) == 5 * 6
+    lo, hi = re.search(r"\(([\d.]+)–([\d.]+) across the whole sweep\)", body).groups()
+    assert_rounds_to(min(med), lo, "§15 sd[v] sweep low")
+    assert_rounds_to(max(med), hi, "§15 sd[v] sweep high")
+    assert max(med) < d["sigma_v"]
+
+
+def test_section_15_dense_over_diagonal_prose():
+    rows = log("funnel_metric")["dense_over_diagonal"]
+    adapted = {r["L"]: r for r in rows if r["arms"] == "adapted"}
+    oracle = {r["L"]: r for r in rows if r["arms"] == "oracle"}
+    body = " ".join(section("15.").split())
+    for r in rows:
+        assert r["dense/diagonal (median)"] == float(np.median(r["seeds"]))
+    # "has medians of 0.63-1.16 across L with per-seed ranges that all straddle 1"
+    meds = [r["dense/diagonal (median)"] for r in adapted.values()]
+    lo, hi = re.search(r"has medians of ([\d.]+)–([\d.]+) across \$L\$", body).groups()
+    assert_rounds_to(min(meds), lo, "§15 adapted ratio low")
+    assert_rounds_to(max(meds), hi, "§15 adapted ratio high")
+    assert all(min(r["seeds"]) < 1 < max(r["seeds"]) for r in adapted.values())
+    # "1.000 at L = 1 and 2, then 1.383 at L = 10 and 0.777 at L = 40"
+    m = re.search(r"comes back ([\d.]+) at \$L = 1\$ and 2, then ([\d.]+) at \$L = 10\$ "
+                  r"and ([\d.]+) at \$L = 40\$", body).groups()
+    for L, cell in zip([1, 2], [m[0], m[0]]):
+        assert_rounds_to(oracle[L]["dense/diagonal (median)"], cell, f"§15 oracle L={L}")
+    assert_rounds_to(oracle[10]["dense/diagonal (median)"], m[1], "§15 oracle L=10")
+    assert_rounds_to(oracle[40]["dense/diagonal (median)"], m[2], "§15 oracle L=40")
+    # "identical matrices come back up to 1.38x apart, either way, and every
+    # adapted median sits inside that band but one, L = 25's 0.63, whose own
+    # four seeds run 0.14-1.30"
+    band = max(max(r["dense/diagonal (median)"], 1 / r["dense/diagonal (median)"])
+               for r in oracle.values())
+    assert_rounds_to(band, quoted(body, r"up to \$([\d.]+)\\times\$ apart"), "§15 oracle band")
+    outside = [L for L, r in adapted.items()
+               if not 1 / band <= r["dense/diagonal (median)"] <= band]
+    L_out, med_out, s_lo, s_hi = re.search(
+        r"\$L = (\d+)\$'s ([\d.]+), whose own four seeds run ([\d.]+)–([\d.]+)", body).groups()
+    assert outside == [int(L_out)]
+    r = adapted[int(L_out)]
+    assert_rounds_to(r["dense/diagonal (median)"], med_out, "§15 outside median")
+    assert_rounds_to(min(r["seeds"]), s_lo, "§15 outside seed low")
+    assert_rounds_to(max(r["seeds"]), s_hi, "§15 outside seed high")
+
+
+def test_section_15_local_conditioning_by_v():
+    d = log("funnel_metric")
+    bins, edges = d["by_v"], d["v_edges"]
+    table = _table(F_BINS_TABLE, "15.")
+    assert len(table) == len(bins)
+    for (label, cells), b, a, z in zip(table.items(), bins, edges[:-1], edges[1:]):
+        lo, hi = re.fullmatch(r"\$\[([-+][\d.]+), ([-+][\d.]+)\]\$", label).groups()
+        assert_rounds_to(a, lo.lstrip("+"), "§15 bin edge")
+        assert_rounds_to(z, hi.lstrip("+"), "§15 bin edge")
+        for key, cell in zip(["identity", "diagonal", "dense", "dense gain"], cells):
+            assert_rounds_to(b[key], cell, f"§15 C {label} {key}")
+        assert b["diagonal"] == b["dense"]
+    body = " ".join(section("15.").split())
+    # "positive definite at 0 of 5000 draws"
+    n = int(quoted(body, r"positive definite at \*\*0 of (\d+) draws\*\*"))
+    assert n == sum(b["n"] for b in bins) and d["pd_fraction"] == 0.0
+    # "Position moves the achievable conditioning 19x ... The rotation moves it 1.000x"
+    assert_rounds_to(d["position_swing"],
+                     quoted(body, r"achievable conditioning \$(\d+)\\times\$"), "§15 swing")
+    assert_rounds_to(d["max_rotation_gain"],
+                     quoted(body, r"The rotation moves it \$([\d.]+)\\times\$"), "§15 rotation")
+    diag = [b["diagonal"] for b in bins]
+    assert d["position_swing"] == max(diag) / min(diag)
+    assert d["max_rotation_gain"] == max(b["dense gain"] for b in bins)
+
+
+def test_section_15_step_size_table_and_prose():
+    d = log("funnel_metric")
+    rows = _f("step_size_limit")
+    cells = _table(F_STEP_TABLE, "15.")
+    keys = ["eps_max at v=-7.73", "at v=0", "at v=+7.73"]
+    for label, name in [("identity", "identity"),
+                        ("exact $\\Sigma$ (diagonal = dense)", "diagonal")]:
+        for key, cell in zip(keys, cells[label]):
+            assert_rounds_to(rows[name][key], cell, f"§15 D {label} {key}")
+    assert rows["diagonal"] == {**rows["dense"], "metric": "diagonal"}
+    body = " ".join(section("15.").split())
+    ratio = rows["identity"][keys[0]] / rows["diagonal"][keys[0]]
+    # "admits a neck step 9.5x smaller than doing nothing at all", and the
+    # Limitations paragraph says the same
+    assert_rounds_to(ratio, quoted(body, r"neck step \$([\d.]+)\\times\$ smaller"), "§15 neck ratio")
+    lim = " ".join(README.split("## Limitations")[1].split())
+    assert_rounds_to(ratio, quoted(lim, r"in the neck \$([\d.]+)\\times\$ \*smaller\*"),
+                     "Limitations neck ratio")
+    # "Both adapted arms settle at eps ~ 0.08 ... 25-28% of the v-marginal"
+    u = d["adapted_eps_unreachable"]
+    assert all(round(a["eps"], 2) == 0.08 for a in u.values())
+    # "which is unstable below v ~ -2"
+    assert all(round(a["unstable_below_v"]) == -2 for a in u.values())
+    for n, a in u.items():
+        L = d["lengths"][-1]
+        assert a["eps"] == float(np.median([p["eps"] for p in d["per_seed"][f"{n} L={L}"]]))
+        assert a["v_mass"] == 0.5 * (1 + math.erf(a["unstable_below_v"] / (d["sigma_v"] * math.sqrt(2))))
+    lo, hi = re.search(r"\*\*(\d+)–(\d+)% of the \$v\$-marginal", body).groups()
+    mass = sorted(100 * a["v_mass"] for a in u.values())
+    assert_rounds_to(mass[0], lo, "§15 unreachable mass low")
+    assert_rounds_to(mass[1], hi, "§15 unreachable mass high")
+
+
+def test_limitations_quotes_section_15():
+    d = log("funnel_metric")
+    lim = " ".join(README.split("## Limitations")[1].split())
+    assert_rounds_to(d["position_swing"],
+                     quoted(lim, r"moves the local conditioning \$(\d+)\\times\$"), "Lim swing")
+    assert_rounds_to(d["max_rotation_gain"],
+                     quoted(lim, r"the rotation moves it \$([\d.]+)\$"), "Lim rotation")
