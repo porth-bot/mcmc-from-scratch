@@ -22,7 +22,7 @@ averages converge:
 $$\frac{1}{N}\sum_{t=1}^{N} f(x_t) \;\xrightarrow{\text{a.s.}}\; \mathbb{E}_\pi[f].$$
 
 Everything below only ever evaluates **ratios** $\tilde\pi(x')/\tilde\pi(x)$,
-so $Z$ cancels — that cancellation is the entire reason MCMC works with
+so $Z$ cancels: that cancellation is the entire reason MCMC works with
 unnormalized densities.
 
 ### 1.1 Invariance and detailed balance
@@ -34,7 +34,7 @@ condition is **detailed balance** (reversibility):
 $$\pi(x)\,P(x \to x') = \pi(x')\,P(x' \to x) \quad \forall x, x'.$$
 
 Integrating both sides over $x$ gives invariance immediately. Detailed
-balance is sufficient, not necessary — but every sampler here satisfies it
+balance is sufficient, not necessary, but every sampler here satisfies it
 (Gibbs blockwise, HMC after the momentum-flip construction).
 
 ### 1.2 From invariance to convergence
@@ -78,7 +78,7 @@ dimension $d \to \infty$, the optimal proposal scale is
 $\sigma \propto d^{-1/2}$ and the optimal acceptance rate tends to
 $\approx 0.234$ (in low dimension the optimum is higher). Two consequences
 visible in our experiments: RWMH needs more, smaller steps as $d$ grows, and
-even at the optimum it explores diffusively — distance covered grows like
+even at the optimum it explores diffusively: distance covered grows like
 $\sqrt{N}$, which is why its autocorrelation time on the correlated Gaussian
 is ~37× HMC's.
 
@@ -115,7 +115,7 @@ $$x_i \mid x_{-i} \sim N\!\Big(\mu_i - \tfrac{1}{P_{ii}}\sum_{j \ne i} P_{ij}(x_
 correlation $\rho$, substituting the conditionals shows the sub-chain in
 $x_1$ is an AR(1) process with coefficient $\rho^2$: each half-sweep loses
 only a factor $\rho$ of memory. Lag-1 autocorrelation $\rho^2$ means
-$\tau \approx (1+\rho^2)/(1-\rho^2)$, diverging as $\rho \to 1$ — the
+$\tau \approx (1+\rho^2)/(1-\rho^2)$, diverging as $\rho \to 1$: the
 coordinate axes are simply the wrong directions to move in. (Verified
 empirically in `tests/test_gibbs.py`.)
 
@@ -152,7 +152,7 @@ generate a flow $\Phi_t$ with:
 
 If we could apply $\Phi_t$ exactly, the proposal $(x', p') = F(\Phi_t(x, p))$
 would change $H$ by zero and be accepted always (see 4.4). We can't, so we
-discretize — with an integrator chosen to keep properties 2 and 3 **exactly**
+discretize, with an integrator chosen to keep properties 2 and 3 **exactly**
 and lose only property 1 to $O(\varepsilon^2)$ error.
 
 ### 4.3 Leapfrog
@@ -197,7 +197,7 @@ $S^{-1} = S$) to the identical integrand. ∎
 
 The full HMC iteration alternates two $\pi(x,p)$-invariant kernels:
 
-1. **Momentum refresh** $p \sim N(0, I)$ — an exact Gibbs draw from
+1. **Momentum refresh** $p \sim N(0, I)$, an exact Gibbs draw from
    $\pi(p \mid x) = \pi(p)$ (Sec. 3's argument: always accepted).
 2. **Trajectory + flip + MH accept** as above.
 
@@ -248,7 +248,7 @@ $$p(v, z) = N(v; 0, \sigma_v^2)\prod_i N\!\big(e^{v/2} z_i;\, 0,\, e^v\big)\; e^
 
 because $N(e^{v/2}z; 0, e^v) = (2\pi e^v)^{-1/2} e^{-z^2/2} = e^{-v/2}\,N(z; 0, 1)$
 and the $e^{\pm(d-1)v/2}$ factors cancel exactly. In $(v, z)$ the target is a
-product of independent Gaussians — trivial for HMC. This is the same
+product of independent Gaussians, trivial for HMC. This is the same
 transformation as the eight-schools non-centered parameterization
 ($\theta_j = \mu + \tau\eta_j$), where hierarchical posteriors develop the
 identical funnel in $(\log\tau, \theta)$ whenever the data only weakly
@@ -256,7 +256,7 @@ identify the group-level scale.
 
 ### 4.7 The Rosenbrock/banana: closed-form ground truth from a curved target
 
-The funnel varies *scale*; the Rosenbrock density varies *direction* — its mass
+The funnel varies *scale*; the Rosenbrock density varies *direction*: its mass
 lies on a thin parabolic ridge whose local covariance rotates along the arc, so
 again no single step size and unit mass are ideal. Take
 
@@ -287,7 +287,7 @@ follow with no approximation. The hand-derived gradient is
 $\partial_{x_1}\log p = -2(x_1-a) + 4b\,x_1(x_2 - x_1^2)$,
 $\partial_{x_2}\log p = -2b\,(x_2 - x_1^2)$; `experiments/validate_exact.py`
 (Part C) checks HMC against these and shows the residual covariance error that a
-single step size leaves on the high-curvature arms — the motivation for
+single step size leaves on the high-curvature arms, the motivation for
 mass-matrix adaptation and NUTS.
 
 ### 4.8 Diagonal mass-matrix adaptation
@@ -304,7 +304,7 @@ p_1 = p_{1/2} + \tfrac{\varepsilon}{2}\nabla\log\tilde\pi(x_1),$$
 with momentum refreshed from $p \sim N(0, M)$ and acceptance from
 $\Delta H = \Delta U + \tfrac12(p'^\top M^{-1} p' - p^\top M^{-1} p)$. A diagonal
 rescaling is still a shear composition, so volume preservation and reversibility
-(Sec. 4.3–4.4) — hence exactness — are untouched: $M$ changes *efficiency only*,
+(Sec. 4.3–4.4), hence exactness, are untouched: $M$ changes *efficiency only*,
 never the stationary distribution. In code this is the single line
 `x += eps * inv_mass * p`, with `inv_mass` the diagonal of $M^{-1}$.
 
@@ -316,10 +316,10 @@ respect the stiffest $\omega_i$ while the softest direction is then integrated f
 below its stability limit and drifts slowly. Choosing $(M^{-1})_{ii} = \sigma_i^2$
 makes every $\omega_i = 1$: all directions share one natural frequency, one step
 size fits all, and the trajectory traverses each coordinate at its own scale. This
-is exactly whitening — HMC with metric $M = \Sigma^{-1}$ on $x$ equals unit-metric
+is exactly whitening: HMC with metric $M = \Sigma^{-1}$ on $x$ equals unit-metric
 HMC on $\Sigma^{-1/2}x$. The diagonal version whitens the *marginals*; it cannot
 rotate, so it leaves correlations (and the funnel/banana curvature of 4.6–4.7)
-uncorrected — that is what a dense metric (Sec. 4.10, where "cannot rotate" is
+uncorrected; that is what a dense metric (Sec. 4.10, where "cannot rotate" is
 made exact: the leftover conditioning is $\kappa(R)$, the correlation matrix's
 own), or Riemannian HMC, is for.
 
@@ -330,8 +330,8 @@ Two practical points, both mirroring Stan:
 - *Memoryless expanding windows.* Warmup splits into an initial buffer (metric
   fixed at $I$ while the chain first reaches the typical set), a sequence of
   windows each ~2× the last, and a terminal buffer. Each window estimates a
-  *fresh* diagonal from only its own draws — early, pre-convergence samples are
-  discarded rather than averaged in — and the step-size dual averaging (Sec. 4.5)
+  *fresh* diagonal from only its own draws (early, pre-convergence samples are
+  discarded rather than averaged in), and the step-size dual averaging (Sec. 4.5)
   is **restarted** after each metric change, because a new metric is a new
   integrator whose optimal $\varepsilon$ differs. The terminal buffer re-tunes
   $\varepsilon$ to the frozen final metric.
@@ -344,8 +344,8 @@ a kernel that depends on the chain's own history is no longer $\pi$-invariant.
 
 **Measured (`experiments/mass_matrix.py`).** On diagonal Gaussians
 $N(0,\operatorname{diag}(1, r^2))$ the adapted metric recovers
-$(M^{-1})_{22}\approx r^2$ and whitens every $r$ to the *same* isotropic problem —
-a flat $\approx 30$ ESS per 1000 gradients independent of $r$ — while unit-metric
+$(M^{-1})_{22}\approx r^2$ and whitens every $r$ to the *same* isotropic problem
+(a flat $\approx 30$ ESS per 1000 gradients independent of $r$), while unit-metric
 HMC swings erratically ($\approx 3$–$34$) as its single step size resonates with
 the wide direction. On non-centered eight schools the diagonal metric drives the
 wide $\mu$ and the $\eta_j$ to near-independence ($\tau\to 1$, up to $15\times$ the
@@ -370,7 +370,7 @@ sub-trajectory of the same length as everything built so far, extending the
 appropriate end. After $j$ doublings the tree holds up to $2^j$ states built with
 $2^j-1$ leapfrog steps. The two endpoints of every *balanced* sub-tree are exact
 leapfrog images of each other, and the direction is chosen independently of the
-current state, so the transition is reversible — this is what lets the accept
+current state, so the transition is reversible; this is what lets the accept
 step be subsumed into the weighting rather than written out (contrast 4.4).
 
 **The no-U-turn criterion.** A balanced sub-tree spanning
@@ -382,14 +382,14 @@ $$(x_+ - x_-)^\top M^{-1} p_- < 0 \quad\text{or}\quad (x_+ - x_-)^\top M^{-1} p_
 
 (The metric enters through the velocity, so the criterion is the natural one in
 the same geometry the leapfrog uses; identity metric $\Rightarrow$ just $p$.)
-The instant *any* sub-tree turns, doubling stops — the length adapts to local
+The instant *any* sub-tree turns, doubling stops: the length adapts to local
 geometry, long in flat directions, short in tight ones, with no user input.
 
 **Multinomial (canonical) selection.** Every visited state $z=(x,p)$ carries
 canonical weight $\exp(-H(z))=\exp(\log\tilde\pi(x) - K(p))$. The next sample is
 drawn from the whole trajectory with probability proportional to that weight.
 Because the trajectory is a slice of the joint $\propto e^{-H}$ whose $x$-marginal
-is $\pi$, the draw leaves $\pi$ invariant — the accept/reject of HMC is replaced
+is $\pi$, the draw leaves $\pi$ invariant: the accept/reject of HMC is replaced
 by *weighting the states the trajectory already visited*. We realise the
 multinomial progressively while building: within a balanced doubling the newer
 half is taken with probability equal to its share $W_{\text{new}}/(W_{\text{old}}+W_{\text{new}})$
@@ -402,7 +402,7 @@ transition (Betancourt 2017, App.).
 where the criterion never fires. A **maximum tree depth** caps work per
 iteration (Stan's default 10 $\Rightarrow \le 1023$ steps). A **divergence**
 check marks any leaf whose energy error $\Delta H$ exceeds a threshold (or is
-non-finite) as invalid — weight zero, expansion halted — because a large $\Delta H$
+non-finite) as invalid (weight zero, expansion halted) because a large $\Delta H$
 means the symplectic integrator has left the level set the exact flow would
 preserve (4.2), the signal that $\varepsilon$ is too large for the local
 curvature. Divergences are recorded per iteration, so their *positions* are a
@@ -411,25 +411,25 @@ diagnostic: on the centered funnel they pile into the neck (§ measured below).
 **Cost accounting.** Each leaf is one leapfrog step. A leapfrog step needs the
 gradient at both endpoints, but the second endpoint of one leaf is the first
 endpoint of the next, so caching the gradient makes NUTS cost exactly *one*
-gradient per leaf — the honest denominator for the ESS-per-gradient comparison.
+gradient per leaf, the honest denominator for the ESS-per-gradient comparison.
 Step size is still dual-averaged (4.5), here driving the mean per-leaf
 acceptance statistic $\overline{\alpha}$ to the target.
 
 **Simplifications vs Stan (stated, not hidden).** This is a faithful but minimal
-NUTS. It uses (i) a *diagonal* metric only — no dense or Riemannian metric, so
+NUTS. It uses (i) a *diagonal* metric only, no dense or Riemannian metric, so
 correlations and the funnel's varying curvature are untouched, exactly as in
 4.8; (ii) the endpoint-momentum U-turn check on each balanced sub-tree, not the
 finer generalized criterion Stan also applies to the leftmost/rightmost
 sub-sub-trees; (iii) a single shared step size and depth cap across chains. The
 consequence is honest and visible: on the **centered** funnel our NUTS still
-diverges in the neck — but so does Stan's, because the neck is a property of the
+diverges in the neck, but so does Stan's, because the neck is a property of the
 *parameterization*, not the sampler. The fix is the non-centering of 4.6, after
 which NUTS mixes cleanly. NUTS removes the length knob; it does not remove the
 need to choose good coordinates.
 
 **Measured (`experiments/nuts_benchmark.py`).** Per gradient, on the
 non-centered funnel NUTS delivers $\approx 29$ ESS$(v)$ per 1000 gradients
-against a hand-tuned fixed-$L$ HMC's $\approx 7$ and RWMH's $\approx 4$ — the
+against a hand-tuned fixed-$L$ HMC's $\approx 7$ and RWMH's $\approx 4$: the
 length automation *buys* efficiency rather than costing it, because a fixed
 $L=20$ overshoots the U-turn on the easy directions. On non-centered eight
 schools NUTS gives the most ESS$(\tau)$ per gradient of the three. On the
@@ -439,7 +439,7 @@ that to zero divergences and $\mathrm{sd}\,3.0$.
 
 ### 4.10 The dense metric: what the diagonal cannot do, exactly
 
-Sec. 4.8 gives the diagonal metric and names its limit — it "cannot rotate" — and
+Sec. 4.8 gives the diagonal metric and names its limit (it "cannot rotate"), and
 Sec. 4.9's measurements pay for that limit ($\log\tau$ gains $2.4\times$ where
 $\eta_1$ gains $15\times$). This section makes the limit quantitative and sets up
 the dense metric that lifts it.
@@ -447,7 +447,7 @@ the dense metric that lifts it.
 **How much conditioning a diagonal metric can remove.** Take a Gaussian target
 with covariance $\Sigma_\pi$, so $U(x) = \tfrac12 x^\top A x$ with
 $A = \Sigma_\pi^{-1}$. By Exercise 4(b), HMC with metric $M$ is identity-metric
-HMC on $y = M^{1/2}x$, whose potential has Hessian $M^{-1/2}AM^{-1/2}$ — similar
+HMC on $y = M^{1/2}x$, whose potential has Hessian $M^{-1/2}AM^{-1/2}$, similar
 to $M^{-1}A$, so the eigenvalues that set leapfrog's stability limit and its
 slowest direction are those of $M^{-1}A$, and the relevant conditioning is
 $\kappa(M^{-1}A)$.
@@ -460,13 +460,13 @@ $$M^{-1}A = S^2 \cdot S^{-1}R^{-1}S^{-1} = S\,R^{-1}S^{-1},$$
 
 a similarity transform of $R^{-1}$. So, reading $\kappa$ off the *eigenvalues*
 (the whitened Hessian $M^{-1/2}AM^{-1/2}$ is symmetric, and it is its eigenvalue
-ratio that sets the step size — the unsymmetric product $M^{-1}A$ has the same
+ratio that sets the step size; the unsymmetric product $M^{-1}A$ has the same
 eigenvalues but *not* the same singular values, so `cond(M^-1 @ A)` is the wrong
 number and is wrong by six orders of magnitude at a scale ratio of 3000):
 
 $$\boxed{\ \kappa_{\text{diag}} = \kappa(R)\ }$$
 
-— **the diagonal metric removes exactly the scale disparity and exactly none of
+**the diagonal metric removes exactly the scale disparity and exactly none of
 the correlation.** What is left over is the conditioning of the correlation
 matrix, which no diagonal choice can touch: $M^{1/2}$ diagonal is an axis-wise
 rescaling and $R$ is invariant under it. In two dimensions $R$ has eigenvalues
@@ -484,7 +484,7 @@ whether $M$ is diagonal, so the algorithm is unchanged in form:
 $$K(p) = \tfrac12 p^\top M^{-1}p,\qquad
 \dot x = M^{-1}p,\qquad p \sim N(0, M),$$
 
-with acceptance still $\min(1, e^{-\Delta H})$ — the drift map
+with acceptance still $\min(1, e^{-\Delta H})$: the drift map
 $(x,p)\mapsto(x + \varepsilon M^{-1}p,\, p)$ has Jacobian
 $\bigl(\begin{smallmatrix} I & \varepsilon M^{-1}\\ 0 & I\end{smallmatrix}\bigr)$,
 determinant 1, for dense $M^{-1}$ exactly as for diagonal.
@@ -505,7 +505,7 @@ triangular), and read all three operations off $L$:
 
 The momentum line is the one worth checking rather than believing:
 $\operatorname{Cov}(L^{-\top}z) = L^{-\top}L^{-1} = (LL^\top)^{-1} = \Sigma^{-1}
-= M$, as required — and it never forms $M$. Note the kinetic energy uses
+= M$, as required, and it never forms $M$. Note the kinetic energy uses
 $L^\top p$ while the draw uses $L^{-\top}z$: a *multiply* by the factor and a
 *solve* against it, which is the usual pair and the usual place to put a sign or
 a transpose in the wrong slot. (Both are checked against a direct
@@ -513,7 +513,7 @@ $\tfrac12 p^\top \Sigma p$ and against the empirical covariance of a large draw
 in `tests/test_metric.py`.)
 
 $L^{-1}$ is built once per metric estimate by forward substitution on the
-identity — $O(d^3/3)$, against the $O(2d^3/3)$ a general solve would spend
+identity: $O(d^3/3)$, against the $O(2d^3/3)$ a general solve would spend
 re-factorizing a matrix already in triangular form (`gp-from-scratch` measured
 that exact waste at $5\times$ on its inner loop; here it is once per warmup
 window, so the point is tidiness, not speed). Per-iteration the dense metric
@@ -522,8 +522,8 @@ in the models here and is the reason Stan defaults to the diagonal at large $d$.
 
 **What this does *not* fix.** A single dense $M$ is one global linear
 reparameterization, so it can only whiten a target whose curvature is the same
-everywhere. Neal's funnel's curvature *depends on position* — the neck is narrow
-in $\eta$ exactly where $\log\tau$ is small — so no constant $M$ helps, and the
+everywhere. Neal's funnel's curvature *depends on position* (the neck is narrow
+in $\eta$ exactly where $\log\tau$ is small), so no constant $M$ helps, and the
 prediction is that the funnel measurements of Sec. 4.6 will be unmoved by this
 change. That is Riemannian HMC's territory (a position-dependent $M(x)$, whose
 Hamiltonian is no longer separable and needs an implicit integrator), which this
@@ -545,7 +545,7 @@ the algebra won.
 
 **Why the diagonal recipe does not generalize.** Sec. 4.8 estimates $d$
 variances from a window of $n$ pooled draws and shrinks them toward a unit
-metric with weight $5/(n+5)$ — under a percent for any window the schedule
+metric with weight $5/(n+5)$, under a percent for any window the schedule
 closes, so that "regularization" is a guard against a degenerate window, not a
 correction. The dense case estimates $d(d+1)/2$ numbers from the *same* window.
 The sample covariance of $n$ centered draws has rank at most $n-1$, so for
@@ -557,7 +557,7 @@ where the truth is $1$).
 Singular is worse than it sounds, because it does not reliably announce itself.
 The Cholesky in `DenseMetric` sees a zero eigenvalue plus roundoff, and the sign
 of that roundoff decides what happens. In the case pinned down in
-`tests/test_adapt.py` — $n = d = 12$ — the smallest eigenvalue lands at
+`tests/test_adapt.py` ($n = d = 12$) the smallest eigenvalue lands at
 $+2\times10^{-16}$, the factorization succeeds, and the sampler runs with a
 metric of condition number $2\times10^{16}$. One draw fewer and the same
 eigenvalue is negative and it raises. The positive-definiteness check is a
@@ -585,7 +585,7 @@ $$\boxed{\ \alpha^\star = \frac{b^2}{a^2+b^2} = \frac{b^2}{\delta^2},\qquad
 
 (the last identity is the same cross-term cancellation applied to
 $S - \mu I = (S-\Sigma) + (\Sigma - \mu I)$), with minimum value
-$a^2b^2/\delta^2$ — strictly below $b^2$, the sample covariance's own error,
+$a^2b^2/\delta^2$, strictly below $b^2$, the sample covariance's own error,
 whenever $a^2$ is finite. **Shrinking always helps in this loss**; how much
 depends on how spherical $\Sigma$ already is.
 
@@ -601,14 +601,14 @@ computed from
 $$\sum_k \lVert x_kx_k^\top - S\rVert_F^2 = \sum_k \lVert x_k\rVert^4 - n\lVert S\rVert_F^2,$$
 
 which follows by expanding the square and using $\sum_k x_kx_k^\top = nS$ with
-$\operatorname{tr}(SS) = \lVert S\rVert_F^2$ — one pass, no $(d,d)$ temporary
+$\operatorname{tr}(SS) = \lVert S\rVert_F^2$: one pass, no $(d,d)$ temporary
 per draw.
 
 **The loss a sampler pays is not that loss.** $\alpha^\star$ minimizes expected
 squared Frobenius error. HMC does not care about squared error; by Sec. 4.10 it
 cares about $\kappa(\hat\Sigma\,\Sigma_\pi^{-1})$, the whitened Hessian's
 eigenvalue *ratio*. These are different objectives and they rank the estimators
-differently — not subtly, but by fourteen orders of magnitude at $n = d$.
+differently, not subtly, but by fourteen orders of magnitude at $n = d$.
 Measured on an AR(1) Gaussian, $\rho = 0.95$, $d = 10$
 (`experiments/dense_metric_estimation.py`, 40 windows, Frobenius error the
 mean and $\kappa$ the median;
@@ -635,14 +635,14 @@ rule: an estimator chosen for a sum-of-squares loss is under no obligation to
 be good in a ratio-of-eigenvalues loss.
 
 At $n/d \gtrsim 20$ all three agree in $\kappa$ to within 2%, which is why
-`dense_shrinkage="stan"` is the default — it is the choice that does not change
-a well-sampled window — and Ledoit–Wolf is what to reach for when the window is
+`dense_shrinkage="stan"` is the default (it is the choice that does not change
+a well-sampled window), and Ledoit–Wolf is what to reach for when the window is
 short relative to $d$, where it is better by a factor of $20$ and up at
 $n \le d$ (and $2\times$ at $n/d = 2$).
 
 **Estimation cost against algebraic gain.** Fix the window at $400$ draws and
-grow $d$. The dense metric's achieved $\kappa$ degrades — $1.28$ at $d = 2$ to
-$7.2$ at $d = 128$, where $n/d = 3.1$ — but $\kappa(R)$ grows faster, from $39$
+grow $d$. The dense metric's achieved $\kappa$ degrades ($1.28$ at $d = 2$ to
+$7.2$ at $d = 128$, where $n/d = 3.1$), but $\kappa(R)$ grows faster, from $39$
 to $1337$, so the *gain* over the best possible diagonal rises to $\approx 276$
 at $d = 32$ and is still $186$ at $d = 128$. On this family the crossover is
 not reached in that range: a fixed warmup budget degrades the dense estimate
@@ -674,7 +674,7 @@ enough on a grid this coarse to say the mechanism is the one named.
 The diagonal metric coming in *below* the identity is not noise about zero: the
 target's marginals are all unit variance, so there is no scale disparity for a
 diagonal to remove, and what is left is warmup spent estimating a metric that
-does nothing. That is Sec. 4.10's claim in its least flattering form — a
+does nothing. That is Sec. 4.10's claim in its least flattering form: a
 diagonal metric removes exactly the scale disparity and exactly none of the
 correlation, and when there is no scale disparity it removes nothing.
 
@@ -717,7 +717,7 @@ variance is set by its single largest draw. Measured over 40 independent
 $1000$-draw windows, the estimates spread $10$–$54\times$ and their median is
 $56$–$58$ against a true $e^{4.5} = 90.0$ (`tests/test_targets.py`). So the
 estimated dense metric here is a diagonal it gets wrong by a factor, plus
-off-diagonal entries that are pure noise around an exact zero — noise that can
+off-diagonal entries that are pure noise around an exact zero, noise that can
 only rotate a target with nothing to rotate.
 
 **The curvature, and where it is not.** Differentiating the gradient once more,
@@ -730,10 +730,10 @@ Its Schur complement on the $x$ block is
 $\sigma_v^{-2} + \tfrac12 e^{-v}s - e^{-v}s = \sigma_v^{-2} - \tfrac12 e^{-v}s$,
 so $A \succ 0$ iff $e^{-v}s < 2/\sigma_v^2$. At a draw from the funnel
 $x_i = e^{v/2} z_i$ with $z \sim N(0, I)$, so $e^{-v}s$ is *exactly*
-$\chi^2_{d-1}$ — mean $d-1 = 9$, required to fall below $2/\sigma_v^2 = 0.22$.
+$\chi^2_{d-1}$, mean $d-1 = 9$, required to fall below $2/\sigma_v^2 = 0.22$.
 The funnel is not log-concave anywhere a sampler goes: 0 of 20 000 draws, where
-eight schools had 2%. Sylvester's law of inertia makes this metric-free — a
-congruence $L^\top A L$ by a nonsingular $L$ preserves signs — so no positive
+eight schools had 2%. Sylvester's law of inertia makes this metric-free (a
+congruence $L^\top A L$ by a nonsingular $L$ preserves signs), so no positive
 definite mass matrix changes it at all, which is why the experiment reports the
 fraction once rather than per metric, and why $\kappa$ has to be read off
 $|\lambda|$ here (`mcmc/adapt.py`).
@@ -755,7 +755,7 @@ at height $v$ is $e^{v}$; over the central 99% of the $v$-marginal,
 $v \in \pm 2.576\,\sigma_v = \pm 7.73$, that is a range of $e^{15.5} \approx
 5\times 10^6$. A global metric multiplies every one of those requirements by
 the same constant, so it can slide the range but never shrink it. The dense
-metric has one more degree of freedom than the diagonal — a rotation — and the
+metric has one more degree of freedom than the diagonal (a rotation), and the
 target's off-diagonals are exactly zero, so it has nothing to spend it on.
 
 The same statement in the integrator. Leapfrog on a direction of whitened
@@ -777,8 +777,8 @@ In the neck, where the $x$ block binds, that family has an explicit form:
 $\lambda_{\max} \approx e^{-v}\lambda_{\max}(\Sigma_{xx})$ gives
 $\varepsilon_{\max}(v) \approx 2e^{v/2}/\sqrt{\lambda_{\max}(\Sigma_{xx})}$,
 so the *ratio* between two heights is $e^{(v_2-v_1)/2}$ and the metric sets only
-the constant in front. Measured against three metrics — identity, the exact
-$\Sigma$, a random dense one — that law holds to 3% down to $v = -5$ and to
+the constant in front. Measured against three metrics (identity, the exact
+$\Sigma$, a random dense one) that law holds to 3% down to $v = -5$ and to
 0.3% below $v = -7$.
 
 It fails in the *mouth*, and the reason is worth stating rather than hiding:
@@ -793,14 +793,14 @@ the orbit.
 **What does work, and it is not a metric.** Two fixes exist and they are the
 same fix. The non-centered parameterization $x_i = e^{v/2} z_i$ (Sec. 4.6)
 makes the target exactly $N(0, \operatorname{diag}(\sigma_v^2, 1, \dots, 1))$,
-where the identity metric is optimal — and `experiments/funnel.py` measures it
+where the identity metric is optimal, and `experiments/funnel.py` measures it
 mixing essentially perfectly. Riemannian HMC (Girolami and Calderhead, 2011)
 does it without needing the change of variables to be found by hand: it carries
 a position-dependent $M(z)$, typically built from $A(z)$ itself, so the
 whitening is redone at every point and the $e^{v}$ span is absorbed by
 construction. The price is a non-separable Hamiltonian, hence an implicit
 generalized leapfrog with fixed-point iterations at each step, and a metric
-that must be positive definite where $A$ is not — SoftAbs exists for exactly
+that must be positive definite where $A$ is not; SoftAbs exists for exactly
 the indefiniteness measured above. Neither is implemented here; both are the
 honest answer to the limitation `experiments/funnel_metric.py` measures.
 
@@ -828,7 +828,7 @@ $\tau^2 \sim \text{InvGamma}(a, b)$.
 
 - $\theta_j$: two Gaussian likelihood terms in $\theta_j$; precision-weighted
   combination gives
-  $\theta_j \mid \cdot \sim N\!\Big(\tfrac{y_j/\sigma_j^2 + \mu/\tau^2}{1/\sigma_j^2 + 1/\tau^2},\; \tfrac{1}{1/\sigma_j^2 + 1/\tau^2}\Big)$ —
+  $\theta_j \mid \cdot \sim N\!\Big(\tfrac{y_j/\sigma_j^2 + \mu/\tau^2}{1/\sigma_j^2 + 1/\tau^2},\; \tfrac{1}{1/\sigma_j^2 + 1/\tau^2}\Big)$,
   the same "shrink toward $\mu$ by noise-to-signal" form as classical
   James–Stein estimators.
 - $\mu$: flat prior, $J$ Gaussian terms
@@ -876,19 +876,19 @@ in the tail has variance that doesn't vanish; the sum random-walks). We use
 **Geyer's (1992) initial monotone positive sequence**: for a reversible
 chain the pair sums $\Gamma_m = \rho_{2m} + \rho_{2m+1}$ are provably
 positive and non-increasing, so we sum $\hat\Gamma_m$ only while positive,
-after enforcing monotonicity — an adaptive truncation with no tuning
+after enforcing monotonicity, an adaptive truncation with no tuning
 parameter. The estimator is itself validated against the AR(1) closed form
 $\tau = (1+\rho)/(1-\rho)$ in `tests/test_diagnostics.py`.
 
 Autocovariances are computed by FFT (Wiener–Khinchin: the autocovariance is
 the inverse transform of the periodogram), zero-padded to $\ge 2n$ to undo
-circular wraparound — $O(n\log n)$.
+circular wraparound, $O(n\log n)$.
 
 ### 6.2 Split-$\hat R$
 
 Run $m$ chains from overdispersed starts, split each in half ($2m$ chains of
 length $n$), and compare two variance estimates: the within-chain mean $W$
-(too *small* before convergence — no chain has covered $\pi$ yet) and
+(too *small* before convergence: no chain has covered $\pi$ yet) and
 
 $$\widehat{\text{var}}^{+} = \frac{n-1}{n}W + \frac{B}{n}, \qquad
 B = n \cdot \operatorname{Var}(\text{chain means}),$$
@@ -898,14 +898,14 @@ $\hat R = \sqrt{\widehat{\text{var}}^{+}/W} \to 1$ from above as the chains
 forget their starts; we flag $\hat R > 1.01$. Splitting catches the failure
 mode where every chain drifts identically (between-chain agreement but
 within-chain nonstationarity). $\hat R \approx 1$ is necessary, never
-sufficient — the funnel RWMH run reaches $\hat R = 1.04$ while missing the
+sufficient: the funnel RWMH run reaches $\hat R = 1.04$ while missing the
 neck entirely, which is why the exact marginal check matters.
 
 ### 6.3 Thinning wastes information
 
 Folklore says: the draws are autocorrelated, so keep every $k$-th and discard
 the rest. For *accuracy* this is always a loss. Correlated draws are worth
-less than independent ones — that is exactly what $\tau$ measures — but they
+less than independent ones (that is exactly what $\tau$ measures), but they
 are not worth *nothing*, and thinning throws away the value they had.
 
 For AR(1) the cost is exact. With $\rho_j = \rho^j$, $\rho \in [0,1)$, Sec. 6.1
@@ -915,7 +915,7 @@ $$\operatorname{Var}(\bar x_N) = \frac{\sigma^2}{N}\cdot\frac{1+\rho}{1-\rho}.$$
 
 Now thin by $k$. A Markov chain observed every $k$ steps is still a Markov
 chain, and the kept draws are themselves AR(1) with lag-1 correlation
-$\rho^k$ — of which there are only $N/k$. So
+$\rho^k$, of which there are only $N/k$. So
 
 $$\operatorname{Var}(\bar x_{N/k}) = \frac{\sigma^2 k}{N}\cdot\frac{1+\rho^k}{1-\rho^k},
 \qquad
@@ -942,7 +942,7 @@ Two limits organize the picture:
 | regime | $R$ | reading |
 |---|---|---|
 | $\rho = 0$ (independent draws) | $R = k$ exactly | pure waste: discard $k-1$ of every $k$ good samples, inflate the variance by exactly $k$ |
-| $\rho \to 1$ (very sticky chain) | $R \to 1$ | nearly free — the discarded draws *were* near-duplicates. Still not an improvement. |
+| $\rho \to 1$ (very sticky chain) | $R \to 1$ | nearly free: the discarded draws *were* near-duplicates. Still not an improvement. |
 
 So the cost of thinning is **largest exactly where it is least often
 proposed** (a fast-mixing chain) and smallest where the chain is so sticky the
@@ -972,13 +972,13 @@ $\hat\rho = 0.944$) and feeding that $\hat\rho$ to the AR(1) formula:
 | 10 | 16,541 | 1.025 | 1.027 |
 | 20 | 15,587 | 1.088 | 1.108 |
 
-— within a couple of percent throughout. Note the honest magnitude: at
+within a couple of percent throughout. Note the honest magnitude: at
 $\rho \approx 0.94$, thinning by 5 costs under 1%. The point is not that
 thinning is catastrophic on a sticky chain; it is that the cost is *never
 negative*, and it becomes large precisely when the chain mixes well.
 
 **When thinning is legitimate**: when the binding constraint is cost rather
-than accuracy — RAM or disk for a long high-dimensional run, or an expensive
+than accuracy: RAM or disk for a long high-dimensional run, or an expensive
 per-draw post-processing step (each retained draw seeding a downstream
 simulation). Then $R$ is the exchange rate, and you are knowingly buying a
 cheaper pipeline with a quantified amount of precision. What is not defensible
@@ -987,7 +987,7 @@ is thinning in the belief that it makes the answer better.
 ### 6.4 Rank-normalized split-$\hat R$
 
 The split-$\hat R$ of Sec. 6.2 is a ratio of variances, and a variance is only a
-meaningful summary when the target *has* one. Consider a heavy-tailed posterior —
+meaningful summary when the target *has* one. Consider a heavy-tailed posterior:
 a Cauchy is the sharp case, with no finite mean or variance at all. The
 within-chain estimate
 
@@ -1004,25 +1004,25 @@ statistic is least able to say so.
 
 **The fix (Vehtari et al. 2021): work with ranks, which are finite regardless of
 the tails.** Pool all $mn$ draws, replace each by its rank $r$ (ties share their
-average rank — a Metropolis chain repeats its state on every rejection, so ties
+average rank; a Metropolis chain repeats its state on every rejection, so ties
 are common and must not bias the transform), and map ranks to normal scores by
 the **Blom (1958) rankit transform**
 
 $$z = \Phi^{-1}\!\Big(\frac{r - 3/8}{mn - 1/4}\Big).$$
 
 The offsets $3/8,\,1/4$ make $\mathbb E[z_{(i)}]$ match the expected order
-statistics of a standard normal to high accuracy, and — the load-bearing
-property — the transform is invariant to any monotone reparameterization of the
+statistics of a standard normal to high accuracy, and (the load-bearing
+property) the transform is invariant to any monotone reparameterization of the
 target. The scores $z$ are approximately $N(0,1)$ for draws from *any* continuous
 distribution, Cauchy included, so they have the finite moments that ordinary
 split-$\hat R$ needs. **Bulk-$\hat R$** is split-$\hat R$ applied to $z$. Because
 rank-normalization only relabels values by their order, a between-chain *location*
-shift survives it intact — the shifted chain's draws still hold the larger ranks —
+shift survives it intact (the shifted chain's draws still hold the larger ranks),
 so bulk-$\hat R$ flags exactly the location non-convergence the raw statistic
 missed, and does so without ever forming a variance of the raw draws.
 
-**Folding, for scale.** A location statistic — classic $\hat R$ *and* bulk-$\hat R$
-alike — is blind to chains that agree on the centre but differ in spread: their
+**Folding, for scale.** A location statistic (classic $\hat R$ *and* bulk-$\hat R$
+alike) is blind to chains that agree on the centre but differ in spread: their
 rank distributions are symmetric about the pooled median either way. Fold the
 draws about the pooled median,
 
@@ -1050,7 +1050,7 @@ step against the exact CDF (error $< 10^{-8}$), keeping the package numpy-only.
 Every sampler above works on an unnormalized density $f$, because the accept
 ratio $f(x')/f(x)$ never sees $Z = \int f$. That invariance is the reason MCMC
 is usable on posteriors, and it is also why none of these samplers can report
-the marginal likelihood, the Bayes factor, or the free energy — all of which
+the marginal likelihood, the Bayes factor, or the free energy, all of which
 *are* $Z$.
 
 **Importance sampling, and why one proposal is not enough.** For a proposal
@@ -1061,9 +1061,9 @@ $$Z = \int f(x)\,dx = \int \frac{f(x)}{q(x)} q(x)\, dx = \mathbb{E}_q\!\left[\fr
 so $\hat Z = \frac1N \sum_i f(x_i)/q(x_i)$ is unbiased for any $N$. Its
 variance is another matter: $\operatorname{Var}_q(f/q)$ is finite only if
 $\int f^2/q < \infty$, which fails whenever $q$ has lighter tails than $f$
-anywhere that matters. In $d$ dimensions the mismatch compounds — for two
+anywhere that matters. In $d$ dimensions the mismatch compounds: for two
 Gaussians differing in scale by a factor $s$ per coordinate, the weight
-variance grows like $s^{d}$ — so the estimator becomes one draw carrying all
+variance grows like $s^{d}$, so the estimator becomes one draw carrying all
 the weight while the sample mean drifts up whenever a rarer draw arrives.
 
 **The annealed construction (Neal 2001).** Interpolate. Fix a ladder
@@ -1105,7 +1105,7 @@ $\mathbb{E}[w] = Z_T/Z_0$. $\blacksquare$
 Two things the proof does *not* need, and it is worth noticing which: the
 transitions do not have to be ergodic, and they do not have to mix at all. If
 they do nothing, $w$ collapses to the plain importance weight and the estimate
-is still unbiased — just as bad-variance as before. Annealing buys variance,
+is still unbiased, just as bad-variance as before. Annealing buys variance,
 never correctness.
 
 **The geometric path, in the form the code computes.** With
@@ -1124,7 +1124,7 @@ $\log \hat Z$ is not unbiased for it. By Jensen,
 $$\mathbb{E}[\log \hat Z] \le \log \mathbb{E}[\hat Z] = \log Z,$$
 
 with equality only if $\hat Z$ is constant. The bias is *always downward*, so a
-ladder that is too short does not scatter around the truth — it reports too
+ladder that is too short does not scatter around the truth: it reports too
 little evidence. Its size is $O(1/N)$ at leading order, which is what licenses
 the leave-one-out jackknife correction in `mcmc/ais.py`; the residual bias is
 $O(1/N^2)$, and neither is any use when a single particle holds all the weight.
@@ -1132,18 +1132,18 @@ $O(1/N^2)$, and neither is any use when a single particle holds all the weight.
 **The diagnostic.** With normalized weights $\bar w_i$, the effective sample
 size $\mathrm{ESS} = (\sum_i w_i)^2 / \sum_i w_i^2$ lies in $[1, N]$ and equals
 $N$ exactly when all weights are equal. It is the only warning available when
-there is no known $Z$ to check against — and, being a function of the same
+there is no known $Z$ to check against, and, being a function of the same
 weights that produced the estimate, it can be fooled by the same failure: if no
 particle ever visited a mode, neither the estimate nor the ESS will mention it.
 
 ## 8. Exercises
 
 Five problems over the material above, in rough order of the sections they lean
-on. Each is answerable with the definitions already given — no outside results
-needed — and each has a check in the repo, so the answer can be *verified*
+on. Each is answerable with the definitions already given (no outside results
+needed), and each has a check in the repo, so the answer can be *verified*
 rather than believed. Solutions are collapsed; the point is to try first.
 
-### Exercise 1 — MALA: the Hastings correction, and what it repairs
+### Exercise 1. MALA: the Hastings correction, and what it repairs
 
 `mcmc/mala.py` proposes $x' = x + \tfrac{\varepsilon^2}{2}\nabla\log\pi(x) + \varepsilon z$,
 $z \sim N(0, I)$, and applies a Metropolis–Hastings accept.
@@ -1169,7 +1169,7 @@ $$q(x' \mid x) = (2\pi\varepsilon^2)^{-d/2}\exp\!\Big(-\frac{\lVert x' - m(x)\rV
 
 Both directions of the ratio use the *same* $\varepsilon$, so
 $(2\pi\varepsilon^2)^{-d/2}$ appears once in the numerator and once in the
-denominator and cancels — which is why `_log_q` returns only the exponent, "up
+denominator and cancels, which is why `_log_q` returns only the exponent, "up
 to the $\varepsilon$ normalizer". What does *not* cancel is $m$: the forward
 proposal is centred on $x$ drifted along $\nabla\log\pi(x)$ and the reverse on
 $x'$ drifted along $\nabla\log\pi(x')$, two different displacements. Hence
@@ -1194,7 +1194,7 @@ $$\frac{\varepsilon^2}{1 - a^2} = \frac{\varepsilon^2}{\varepsilon^2 - \varepsil
 
 ULA is systematically **over-dispersed**, by $6.7\%$ at $\varepsilon = 0.5$ and
 $19\%$ at $\varepsilon = 0.8$, and the bias vanishes only as
-$\varepsilon^2/4 \to 0$ — i.e. exactly in the limit where the sampler stops
+$\varepsilon^2/4 \to 0$, i.e. exactly in the limit where the sampler stops
 moving. That trade is what the accept step buys you out of: it makes $\pi$ the
 *exact* stationary law at any usable $\varepsilon$. Note the bias is $O(\varepsilon^2)$
 in the variance even though Euler–Maruyama's weak error is $O(\varepsilon)$ per
@@ -1207,12 +1207,12 @@ $1/(1-\varepsilon^2/4)$ while MALA at the same step size stays at $1$.
 *Why it matters beyond MCMC:* annealed **unadjusted** Langevin with a *learned*
 $\nabla\log\pi$ is how score-based generative models sample. They cannot run the
 accept step (no normalized $\pi$ to evaluate), so this bias is a permanent
-resident of that setting rather than a bug — one more reason the noise schedule
+resident of that setting rather than a bug, one more reason the noise schedule
 does so much work there.
 
 </details>
 
-### Exercise 2 — A Gibbs sampler for regression with unknown noise
+### Exercise 2. A Gibbs sampler for regression with unknown noise
 
 Sec. 5.1 gives conjugate linear regression with $\sigma^2$ **known**. Now put a
 prior on it: $y = X\beta + \epsilon$, $\epsilon \sim N(0, \sigma^2 I)$,
@@ -1236,7 +1236,7 @@ $$\beta \mid \sigma^2, y \sim N(\mu_n, \Sigma_n), \qquad
 
 **$\sigma^2$ given $\beta$.** Keep only the factors containing $\sigma^2$. The
 likelihood contributes $(\sigma^2)^{-n/2}\exp(-\lVert y - X\beta\rVert^2/2\sigma^2)$
-(the prior on $\beta$ has no $\sigma^2$ in it — this is where the choice of a
+(the prior on $\beta$ has no $\sigma^2$ in it; this is where the choice of a
 *non*-$g$-prior matters), and the InvGamma$(a,b)$ prior contributes
 $(\sigma^2)^{-(a+1)}\exp(-b/\sigma^2)$. Multiplying,
 
@@ -1250,13 +1250,13 @@ the same shape-plus-half-the-sum-of-squares update as $\tau^2$ in Sec. 5.2.
 $\sigma^2$, so marginalizing it out mixes Gaussians of different widths: the
 marginal $p(\beta \mid y)$ is a multivariate Student-$t$, not a Gaussian (the
 scale mixture of Sec. 4.7's heavy-tailed target, in fact). Each conditional
-stays standard while the joint does not — which is precisely the situation
+stays standard while the joint does not, which is precisely the situation
 Gibbs sampling exists for, and precisely why the sampler is *not* a way to
 avoid knowing the conditionals.
 
 </details>
 
-### Exercise 3 — Why Gibbs crawls on a correlated Gaussian
+### Exercise 3. Why Gibbs crawls on a correlated Gaussian
 
 Sec. 3.1 asserts that for the bivariate Gaussian with correlation $\rho$ the
 systematic-scan sub-chain in $x_1$ is AR(1) with coefficient $\rho^2$. Prove it,
@@ -1280,19 +1280,19 @@ $$x_1^{t} = \rho\big(\rho\,x_1^{t-1} + \sqrt{1-\rho^2}\,\eta_{t-1}\big) + \sqrt{
 
 The innovation is a sum of independent Gaussians with variance
 $\rho^2(1-\rho^2) + (1-\rho^2) = 1-\rho^4$, so the stationary variance is
-$(1-\rho^4)/(1-\rho^4) = 1$ — consistent with the correct marginal, a useful
+$(1-\rho^4)/(1-\rho^4) = 1$, consistent with the correct marginal, a useful
 sanity check that no invariance was lost. For AR(1) with coefficient $a$,
 $\text{corr}(x_t, x_{t+k}) = a^{k}$, so
 
 $$\tau = 1 + 2\sum_{k\ge1} a^k = \frac{1+a}{1-a} = \frac{1+\rho^2}{1-\rho^2}.$$
 
-At $\rho = 0.9$: $\tau \approx 9.5$. At $\rho = 0.99$: $\tau \approx 99.5$ — a
+At $\rho = 0.9$: $\tau \approx 9.5$. At $\rho = 0.99$: $\tau \approx 99.5$, a
 tenfold collapse in effective sample size for a tenfold approach of $\rho$ to 1.
 The geometry behind it: each coordinate update can only move parallel to an
 axis, while the target's mass lies along the diagonal, so the chain must
 staircase along a ridge whose width is $\sqrt{1-\rho^2}$. HMC (Sec. 4) escapes
 this because its trajectories are not axis-aligned, and a mass matrix (Sec. 4.8)
-does not fix it either — a diagonal metric rescales axes, it cannot rotate them.
+does not fix it either: a diagonal metric rescales axes, it cannot rotate them.
 
 *Check it:* `tests/test_gibbs.py::test_gibbs_mixing_slows_as_correlation_grows`
 measures the lag-1 autocorrelation at $\rho \in \{0.5, 0.95\}$ against
@@ -1300,7 +1300,7 @@ $\rho^2$; `experiments/gibbs_scan.py` reports the ESS consequence.
 
 </details>
 
-### Exercise 4 — Leapfrog keeps its guarantees under a mass matrix
+### Exercise 4. Leapfrog keeps its guarantees under a mass matrix
 
 Sec. 4.8 replaces the kinetic energy with $K(p) = \tfrac12 p^\top M^{-1} p$ for
 diagonal $M$, so the leapfrog drift becomes $x \mathrel{+}= \varepsilon\, M^{-1}p$.
@@ -1317,7 +1317,7 @@ $y = M^{1/2}x$. What does that say about which $M$ to want?
 
 **(a)** Nothing structural changed. The drift is still a map
 $(x,p)\mapsto(x + \varepsilon M^{-1}p,\; p)$, whose Jacobian is
-$\begin{pmatrix} I & \varepsilon M^{-1}\\ 0 & I\end{pmatrix}$ — upper triangular
+$\begin{pmatrix} I & \varepsilon M^{-1}\\ 0 & I\end{pmatrix}$, upper triangular
 with unit diagonal, determinant 1. The kicks are unchanged and likewise unit
 Jacobian, and the composition is still palindromic, so momentum flip still
 retraces the trajectory. Volume preservation and involutivity are the *only*
@@ -1334,17 +1334,17 @@ $\pi_M(y) \propto \pi(M^{-1/2}y)$. The two runs are in bijection step for step
 (the momentum draws correspond because $p\sim N(0,M) \iff q \sim N(0,I)$).
 
 So choosing $M$ *is* choosing a linear reparameterization of the target, and the
-ideal $M$ is the one that makes $\pi_M$ isotropic — i.e. $M^{-1} \approx
+ideal $M$ is the one that makes $\pi_M$ isotropic, i.e. $M^{-1} \approx
 \text{Cov}_\pi(x)$, which is exactly what warmup estimates. It also says what a
 diagonal $M$ cannot do: $M^{1/2}$ diagonal is an axis-wise rescaling, so it can
 equalize marginal scales but never rotate a correlated target into isotropy.
-The measured consequence is in Sec. 4.8 — flat ESS across scale ratios
+The measured consequence is in Sec. 4.8: flat ESS across scale ratios
 $r \in \{2..50\}$ on a diagonal target, but only $2.4\times$ on eight schools'
 $\log\tau$, whose difficulty is curvature rather than scale.
 
 </details>
 
-### Exercise 5 — The replica-exchange acceptance probability
+### Exercise 5. The replica-exchange acceptance probability
 
 `mcmc/tempering.py` runs $K$ chains at inverse temperatures
 $\beta_1 = 1 > \beta_2 > \dots > \beta_K$, targeting the product
@@ -1373,7 +1373,7 @@ $$\frac{\Pi(\dots x_j \dots x_i \dots)}{\Pi(\dots x_i \dots x_j \dots)}
 
 so $\alpha = \min\big(1, \exp[(\beta_i-\beta_j)(L_j - L_i)]\big)$. That is
 literally `delta = (betas[i] - betas[i+1]) * (lp[i+1] - lp[i])` in
-`tempering.py`, with the untempered $\log\pi$ values cached per replica — which
+`tempering.py`, with the untempered $\log\pi$ values cached per replica, which
 is also why a swap costs **zero** density evaluations. Note the pleasing sign
 structure: $\beta_i > \beta_j$ (colder first), so the swap is always accepted
 when $L_j > L_i$, i.e. when the hotter replica has wandered somewhere the colder
@@ -1384,14 +1384,14 @@ the ladder.
 (swap twice and you are back), and it is a permutation of coordinates, hence
 volume-preserving. Those are precisely the two hypotheses of the Sec. 4.4
 argument, so the same detailed-balance proof applies verbatim with $\Pi$ in
-place of the augmented HMC target — the trajectory-plus-flip of HMC and the
+place of the augmented HMC target: the trajectory-plus-flip of HMC and the
 replica swap are the same theorem used twice. (The alternating even/odd parity
 in the code is only there to keep the swapped pairs disjoint within a sweep, so
 each is a valid kernel on its own.)
 
 **(c)** The exponent is a product of a ladder-spacing term $(\beta_i - \beta_j)$
 and a *data* term $(L_j - L_i)$, whose typical size is set by how much the
-distribution of $\log\pi$ differs between the two temperatures — roughly the
+distribution of $\log\pi$ differs between the two temperatures, roughly the
 spread of $\log\pi$ under each. Rungs too far apart make $|(\beta_i-\beta_j)(L_j-L_i)|$
 large and negative most of the time, so swaps are rejected and the ladder is a
 chain of disconnected samplers; rungs too close waste compute on replicas that
