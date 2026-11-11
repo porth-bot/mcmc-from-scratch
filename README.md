@@ -3,7 +3,7 @@
 ![ci](https://github.com/porth-bot/mcmc-from-scratch/actions/workflows/ci.yml/badge.svg)
 
 Metropolis–Hastings, Gibbs, and Hamiltonian Monte Carlo implemented in pure
-NumPy — no PyMC, no Stan, no autograd — and **validated against exact
+NumPy (no PyMC, no Stan, no autograd) and **validated against exact
 answers** at every level: hand-derived gradients against finite differences,
 sampler moments against closed-form posteriors, the ESS estimator against the
 AR(1) closed form, and (where no closed form exists) two independent
@@ -29,17 +29,17 @@ designed so that **every claim has a ground truth or a cross-check**.
 Full derivations (detailed balance → MH → Gibbs-as-MH → the HMC involution
 argument → dual averaging → ESS/R-hat) are in
 [`theory/derivations.md`](theory/derivations.md), which ends with
-[five exercises](theory/derivations.md#7-exercises) over the material —
-MALA's Hastings correction and the bias it repairs, a Gibbs sampler for
+[five exercises](theory/derivations.md#7-exercises) over the material
+(MALA's Hastings correction and the bias it repairs, a Gibbs sampler for
 regression with unknown noise, the $\rho^2$ autocorrelation, leapfrog under a
-mass matrix, and the replica-exchange acceptance ratio — with collapsed
+mass matrix, and the replica-exchange acceptance ratio), with collapsed
 solutions and, for each, the test or experiment that checks the answer. The
 short version of why HMC works:
 
 $$\pi(x, p) \propto e^{-H(x,p)}, \quad H = -\log\tilde\pi(x) + \tfrac12\lVert p\rVert^2$$
 
 Hamiltonian flow conserves $H$, preserves phase-space volume (Liouville), and
-is reversible — an exact-flow proposal would always be accepted. The leapfrog
+is reversible: an exact-flow proposal would always be accepted. The leapfrog
 integrator keeps volume preservation and reversibility *exactly* (each
 substep is a unit-Jacobian shear; the composition is palindromic) and loses
 only energy conservation to $O(\varepsilon^2)$, which a Metropolis step with
@@ -52,18 +52,18 @@ $|\Delta H|$ when $\varepsilon$ is halved at fixed trajectory time.
 | Module | Contents |
 |---|---|
 | [`mcmc/metropolis.py`](mcmc/metropolis.py) | Random-walk MH, log-space accept, batched chains |
-| [`mcmc/gibbs.py`](mcmc/gibbs.py) | Systematic- **or** random-scan driver over state dicts + Gaussian full conditionals derived via the precision matrix. At matched work, systematic scan is ~2× more efficient than random scan on the correlated Gaussian ([`experiments/gibbs_scan.py`](experiments/gibbs_scan.py)) — random scan can leave a coordinate stale for a sweep |
-| [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), optional **diagonal mass-matrix adaptation** from windowed warmup variances (Stan-style memoryless windows — a per-axis preconditioner so one step size fits an axis-aligned target of unequal scales), divergence tracking |
-| [`mcmc/nuts.py`](mcmc/nuts.py) | No-U-Turn Sampler (multinomial, Betancourt 2017): recursive doubling with the generalized U-turn criterion, canonical (multinomial) state selection, gradient-cached leapfrog (one gradient per leaf), max-depth **and** per-iteration divergence handling, same dual-averaging warmup — HMC with the trajectory-length knob removed. ~4–6× the ESS per gradient of hand-tuned fixed-$L$ HMC (§9) |
-| [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction — RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
-| [`mcmc/sgld.py`](mcmc/sgld.py) | Stochastic gradient Langevin dynamics (Welling & Teh 2011): MALA with the accept step deleted and the gradient replaced by a minibatch estimate. Unadjusted, so it does **not** target $\pi$ — the point of the module is measuring how far off it is. On a Gaussian the stationary law is exactly $N(0,\ s^2/(1 - \epsilon^2/4s^2))$, a closed form the tests check at over-dispersions from 0.25% to 96%. The minibatch noise is negligible only below $\epsilon = 2/\sqrt{\mathrm{Var}[\hat g]}$, measured at $\approx 0.0045$ on the BNN posterior with batch 20 of 200 — *smaller* than a step one would actually run there |
-| [`mcmc/sghmc.py`](mcmc/sghmc.py) | **Stochastic gradient HMC** (Chen, Fox & Guestrin 2014): momentum, friction, and the noise correction that makes the two consistent. Without friction the chain has no stationary law at all — symplectic Euler preserves volume, so a noisy gradient pumps energy in forever. The stationary covariance on a Gaussian is the exact solution of a discrete Lyapunov equation, which separates the errors by order: $O(h^2)$ from the discretization, $O(h)/\gamma$ from an uncorrected minibatch noise. At matched bias and matched gradient evaluations it is 2–9× SGLD's effective samples, and its friction condition $2\gamma \ge h\hat V$ is unaffordable on the BNN posterior (§11) |
-| [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics — for multimodal targets |
-| [`mcmc/ais.py`](mcmc/ais.py) | **Annealed importance sampling** (Neal 2001): the normalizing constant every other sampler here throws away, since $Z$ cancels out of every accept ratio. Geometric path from a tractable $p_0$ to the target, weights accumulated along the way, $\mathbb{E}[w] = Z_T/Z_0$ **exactly** — proof in [theory](theory/derivations.md) §7, in the extended trajectory space. Reports log $Z$, the weight ESS in log space, and a jackknife correction for the $O(1/N)$ bias of log-of-a-mean (§10) |
-| [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021 — min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021 — Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio` — the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
-| [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures — with analytic gradients and exact reference samplers |
+| [`mcmc/gibbs.py`](mcmc/gibbs.py) | Systematic- **or** random-scan driver over state dicts + Gaussian full conditionals derived via the precision matrix. At matched work, systematic scan is ~2× more efficient than random scan on the correlated Gaussian ([`experiments/gibbs_scan.py`](experiments/gibbs_scan.py)): random scan can leave a coordinate stale for a sweep |
+| [`mcmc/hmc.py`](mcmc/hmc.py) | Leapfrog, HMC with jittered trajectory length, dual-averaging warmup (Hoffman & Gelman 2014, Alg. 5), optional **diagonal mass-matrix adaptation** from windowed warmup variances (Stan-style memoryless windows; a per-axis preconditioner so one step size fits an axis-aligned target of unequal scales), divergence tracking |
+| [`mcmc/nuts.py`](mcmc/nuts.py) | No-U-Turn Sampler (multinomial, Betancourt 2017): recursive doubling with the generalized U-turn criterion, canonical (multinomial) state selection, gradient-cached leapfrog (one gradient per leaf), max-depth **and** per-iteration divergence handling, same dual-averaging warmup: HMC with the trajectory-length knob removed. ~4–6× the ESS per gradient of hand-tuned fixed-$L$ HMC (§9) |
+| [`mcmc/mala.py`](mcmc/mala.py) | Metropolis-adjusted Langevin: one gradient-drift Euler step with the full asymmetric Hastings correction, RWMH plus a score-driven drift, and the exact bridge toward score-based diffusion (unadjusted annealed Langevin is this proposal minus the accept step) |
+| [`mcmc/sgld.py`](mcmc/sgld.py) | Stochastic gradient Langevin dynamics (Welling & Teh 2011): MALA with the accept step deleted and the gradient replaced by a minibatch estimate. Unadjusted, so it does **not** target $\pi$: the point of the module is measuring how far off it is. On a Gaussian the stationary law is exactly $N(0,\ s^2/(1 - \epsilon^2/4s^2))$, a closed form the tests check at over-dispersions from 0.25% to 96%. The minibatch noise is negligible only below $\epsilon = 2/\sqrt{\mathrm{Var}[\hat g]}$, measured at $\approx 0.0045$ on the BNN posterior with batch 20 of 200, *smaller* than a step one would actually run there |
+| [`mcmc/sghmc.py`](mcmc/sghmc.py) | **Stochastic gradient HMC** (Chen, Fox & Guestrin 2014): momentum, friction, and the noise correction that makes the two consistent. Without friction the chain has no stationary law at all: symplectic Euler preserves volume, so a noisy gradient pumps energy in forever. The stationary covariance on a Gaussian is the exact solution of a discrete Lyapunov equation, which separates the errors by order: $O(h^2)$ from the discretization, $O(h)/\gamma$ from an uncorrected minibatch noise. At matched bias and matched gradient evaluations it is 2–9× SGLD's effective samples, and its friction condition $2\gamma \ge h\hat V$ is unaffordable on the BNN posterior (§11) |
+| [`mcmc/tempering.py`](mcmc/tempering.py) | Parallel tempering (replica exchange): geometric temperature ladder, even/odd swap moves, per-pair swap-rate diagnostics, for multimodal targets |
+| [`mcmc/ais.py`](mcmc/ais.py) | **Annealed importance sampling** (Neal 2001): the normalizing constant every other sampler here throws away, since $Z$ cancels out of every accept ratio. Geometric path from a tractable $p_0$ to the target, weights accumulated along the way, $\mathbb{E}[w] = Z_T/Z_0$ **exactly**; proof in [theory](theory/derivations.md) §7, in the extended trajectory space. Reports log $Z$, the weight ESS in log space, and a jackknife correction for the $O(1/N)$ bias of log-of-a-mean (§10) |
+| [`mcmc/diagnostics.py`](mcmc/diagnostics.py) | FFT autocorrelation, $\tau_{\text{int}}$ via Geyer initial monotone sequence, bulk ESS, tail ESS (Vehtari et al. 2021: min over the 5%/95% tail-indicator ESSs, so a poorly-explored tail is flagged even when the bulk mixes), classic split-$\hat R$ **and** rank-normalized split-$\hat R$ (Vehtari et al. 2021: Blom rank-normal transform + a folded term for scale, robust on heavy-tailed targets where the variance-based statistic reads a false 1; §8), compute-normalized efficiency (ESS per second / per evaluation), and `thinning_variance_ratio`, the closed-form price of thinning an AR(1) chain, $R = k(1+\rho^k)(1-\rho)/[(1-\rho^k)(1+\rho)] \ge 1$, proved and measured in [theory](theory/derivations.md) §6.3 (thinning never improves accuracy; it costs most when the chain mixes *well*) |
+| [`mcmc/targets.py`](mcmc/targets.py) | Correlated Gaussians, Neal's funnel, Rosenbrock, Student-t, Gaussian mixtures, with analytic gradients and exact reference samplers |
 | [`mcmc/tails.py`](mcmc/tails.py) | Heavy-tail rates: the generalized-CLT exponents for the sample mean and the plug-in sd, exact Student-t interval probabilities by quadrature, and the coverage/width machinery §12 scores them with |
-| [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients — and the hand-derived **Hessian**, whose eta block is diagonal with entries $1 + \tau^2/\sigma_j^2$, which is how §14 shows the residual a global metric leaves is position and not rotation |
+| [`mcmc/models.py`](mcmc/models.py) | Conjugate Bayesian linear regression (closed-form posterior as answer key); eight schools with conjugate Gibbs conditionals *and* a non-centered HMC parameterization with hand-derived, Jacobian-corrected gradients, and the hand-derived **Hessian**, whose eta block is diagonal with entries $1 + \tau^2/\sigma_j^2$, which is how §14 shows the residual a global metric leaves is position and not rotation |
 | [`mcmc/bnn.py`](mcmc/bnn.py) | Bayesian neural network (1-hidden-layer tanh MLP) with hand-written backprop log-posterior gradient, sampled by HMC; plus an Adam MAP/deep-ensemble trainer sharing the same model and objective |
 
 All log-densities are batched over chains, so 4 chains advance in lockstep as
@@ -84,7 +84,7 @@ Correlated Gaussian ($\rho = 0.9$), 4 chains, overdispersed starts:
 All three reproduce the exact moments. The efficiency story has a nuance
 worth stating precisely: **per draw**, HMC dominates ($\tau$ 37× smaller than
 RWMH); **per density evaluation**, exact-conditional Gibbs wins on this
-target — when conjugacy hands you the full conditionals, use them. On the
+target: when conjugacy hands you the full conditionals, use them. On the
 conjugate linear-regression posterior (samplers see only the unnormalized
 density), sampled means match the closed form to $\le 0.003$:
 
@@ -94,27 +94,27 @@ density), sampled means match the closed form to $\le 0.003$:
 
 ### 2. Neal's funnel (`experiments/funnel.py`)
 
-True $v$-marginal is $N(0, 3^2)$ exactly — so bias is measurable:
+True $v$-marginal is $N(0, 3^2)$ exactly, so bias is measurable:
 
 | sampler | draws | E$[v]$ (true 0) | sd$[v]$ (true 3) | $\tau(v)$ | ESS$(v)$ | $\hat R(v)$ | divergent |
 |---|---|---|---|---|---|---|---|
-| RWMH | 400k | 0.53 | 2.22 | 2361 | 169 | 1.04 | — |
+| RWMH | 400k | 0.53 | 2.22 | 2361 | 169 | 1.04 | - |
 | HMC (centered) | 100k | 0.49 | 2.59 | 190 | 528 | 1.02 | 5 998 |
 | HMC (non-centered) | 100k | **0.02** | **2.99** | 12.5 | 8 001 | 1.000 | 0 |
 
 Two honest lessons the numbers force on you: (1) $\hat R = 1.04$ while
-missing the neck entirely — $\hat R \approx 1$ is *necessary, not
+missing the neck entirely: $\hat R \approx 1$ is *necessary, not
 sufficient*; only the exact marginal exposes the bias. (2) The centered HMC
 divergences aren't noise to suppress; they're the sampler reporting the
 region it cannot enter. The non-centered change of variables
 $x_i = e^{v/2} z_i$ makes the target an independent Gaussian (the Jacobian
-cancels the varying scale exactly — derivation in Sec. 4.6), and every
+cancels the varying scale exactly; derivation in Sec. 4.6), and every
 pathology disappears.
 
 <p align="center"><img src="figures/funnel_v_marginal.png" width="520"></p>
 
-The obvious question that leaves — whether a better *mass matrix*, rather than
-a change of variables, would have done it — is answered in §15, and the answer
+The obvious question that leaves (whether a better *mass matrix*, rather than
+a change of variables, would have done it) is answered in §15, and the answer
 is no, for a reason available in closed form on this target.
 
 ### 3. Real data: eight schools (`experiments/eight_schools.py`)
@@ -128,7 +128,7 @@ one (different parameterizations, different kernels, different code paths).
 
 Result: all 10 posterior means agree to **0.131** (posterior sds are 4.1 to 4.5,
 so this is within Monte Carlo error), $\hat R \le 1.002$ everywhere. HMC's
-ESS on $\mu$ is 63k from 80k draws vs Gibbs's 1.5k from 160k — the centered
+ESS on $\mu$ is 63k from 80k draws vs Gibbs's 1.5k from 160k: the centered
 Gibbs chain suffers exactly the $\mu$–$\theta$ coupling that non-centering
 removes.
 
@@ -139,7 +139,7 @@ removes.
 was chosen to keep all Gibbs conditionals conjugate, and it concentrates
 $\tau$ near ~1.5, i.e. strong pooling. The classic half-Cauchy analysis
 (Gelman 2006) is far more diffuse in $\tau$. With $J = 8$ noisy groups the
-data genuinely cannot pin $\tau$ down, so the prior matters — both routes
+data genuinely cannot pin $\tau$ down, so the prior matters. Both routes
 share the prior, which is what makes their agreement a valid check of the
 *samplers* rather than a claim about the *science*.
 
@@ -168,14 +168,14 @@ reaches the bottom.
 
 Every target above is a hand-written density. This one is a *model*: the
 unknown is the full weight vector of a small tanh MLP (`mcmc/bnn.py`,
-$3H+1 = 49$ dimensions at $H=16$), and the target is its Bayesian posterior —
+$3H+1 = 49$ dimensions at $H=16$), and the target is its Bayesian posterior:
 Gaussian likelihood, isotropic Gaussian prior. The log-posterior gradient is a
 backprop pass written out by hand and checked against finite differences, so
 HMC is running on exactly the quantity training would compute. The data is
 $\sin(3x)$ on $[-2, 2]$ **with a gap cut out of the middle**; the question is
 which method reports that it is guessing across the gap.
 
-Three predictive bands on the same model — HMC (samples the posterior), a
+Three predictive bands on the same model: HMC (samples the posterior), a
 5-member deep ensemble (the same net from 5 random inits), and a single Adam
 MAP point estimate:
 
@@ -193,13 +193,13 @@ the gap (95% target coverage):
 | point estimate (MAP) | observed | 0.91 | −0.63 | 0.10 |
 | point estimate (MAP) | **gap** | **0.30** | **2.47** | 0.10 |
 
-The point estimate has no epistemic uncertainty — its band is a constant-width
+The point estimate has no epistemic uncertainty: its band is a constant-width
 noise ribbon, so it stays just as confident inside the gap (coverage collapses
 to 0.30, NLL blows up to 2.47). The deep ensemble widens and is the strong
 cheap baseline, but still under-covers the gap (0.57). HMC widens the most and
 stays calibrated (1.00 / NLL 0.08).
 
-**Does the section 7 metric help here? No — measured, three paired seeds.**
+**Does the section 7 metric help here? No. Measured, three paired seeds.**
 The obvious next knob on a 49-dimensional posterior is the diagonal mass
 matrix: warmup estimates each coordinate's marginal variance and preconditions
 it to unit scale. The adapted scales do span 7.4×, so there is anisotropy to
@@ -222,7 +222,7 @@ were the right ones); here they are not.
 **Convergence is judged in function space, on purpose.** The weight posterior
 is invariant to permuting hidden units and to sign-flipping (tanh is odd), so
 it is massively multimodal and split-$\hat R$ on a raw weight coordinate is
-meaningless — measured here, median 1.55 and up to 2.58 across coordinates.
+meaningless: measured here, median 1.55 and up to 2.58 across coordinates.
 The *predictions* are a permutation-invariant functional of the weights, and
 their split-$\hat R$ sits at 1.02 (max 1.08) with ESS in the hundreds. Always
 diagnose the quantity you care about, not the raw parameters.
@@ -232,11 +232,11 @@ diagnose the quantity you care about, not the raw parameters.
 Every section above validates against an *exact answer*. This one validates
 against another *sampler*: [emcee](https://emcee.readthedocs.io) (Foreman-Mackey
 et al. 2013), the widely used affine-invariant ensemble sampler. emcee is
-gradient-free and its stretch move is invariant under affine reparameterization
-— which is the entire benchmark. It is run **vectorized** on our batched
+gradient-free and its stretch move is invariant under affine reparameterization,
+which is the entire benchmark. It is run **vectorized** on our batched
 `logpdf` (same NumPy-over-an-ensemble computation as ours, so the wall-clock gap
 is algorithmic), ESS is computed with *our* estimator for every sampler, and
-"evaluations" counts every call touching the whole model over the full run —
+"evaluations" counts every call touching the whole model over the full run:
 a density eval (RWMH/emcee), a full-conditional draw (Gibbs), or a gradient eval
 (HMC), with emcee's counted exactly by wrapping its log-prob.
 
@@ -250,10 +250,10 @@ a density eval (RWMH/emcee), a full-conditional draw (Gibbs), or a gradient eval
 | emcee (stretch) | no | 256k | 8 050 | 27.9 | 1.003 |
 
 Per evaluation, emcee's affine-invariant stretch beats the naive
-coordinate-wise random walk with **zero tuning** (27.9 vs 12.6 — the
+coordinate-wise random walk with **zero tuning** (27.9 vs 12.6; the
 correlation an affine map removes costs it nothing) and even edges HMC's
 per-eval number. But recall an HMC evaluation is a *gradient*, the rest are
-*densities* (a gradient costs a constant factor more — the honest asterisk on
+*densities* (a gradient costs a constant factor more, the honest asterisk on
 the per-eval column). On a target this cheap and low-dimensional, exact-
 conditional Gibbs wins outright, both per evaluation and per wall-clock
 second (its ESS/s beat HMC's by about a third on three reruns here; timings
@@ -268,34 +268,34 @@ method leads on every axis.
 | HMC (ours, non-centered) | yes | **30 274** | 5 872 | 6.4 | 1.001 |
 | emcee (stretch, non-centered) | no | 6 845 | 6 035 | 6.9 | 1.004 |
 
-HMC is the only sampler uniformly efficient across all ten coordinates —
-gradient plus non-centering give ESS($\mu$) ~30k — but that took a hand-derived,
+HMC is the only sampler uniformly efficient across all ten coordinates
+(gradient plus non-centering give ESS($\mu$) ~30k), but that took a hand-derived,
 Jacobian-corrected gradient *and* the reparameterization, and it still logged
 ~1% divergences in the neck. **emcee's real case is here:** with no gradient and
 no reparameterization, it reaches ESS comparable to HMC on the hard $\tau$
 coordinate and balanced ESS elsewhere, for the price of writing down the
 log-density alone. Centered Gibbs is fastest per second but its $\mu$–$\theta$
-coupling wrecks ESS($\mu$) (~600) — the same coupling non-centering removes.
+coupling wrecks ESS($\mu$) (~600), the same coupling non-centering removes.
 
 <p align="center"><img src="figures/external_benchmark.png" width="820"></p>
 
 The honest summary: **use the gradient when you have it and the dimension isn't
 tiny** (HMC's uniform, high per-coordinate ESS), **use conjugacy when you have
 it** (Gibbs's cheap exact conditionals), and **reach for a gradient-free
-ensemble like emcee when deriving a gradient is impractical** — it is
+ensemble like emcee when deriving a gradient is impractical**: it is
 genuinely competitive per evaluation and needs nothing but the log-density.
 
 ### 7. Diagonal mass-matrix adaptation (`experiments/mass_matrix.py`)
 
-Every HMC run above used the identity metric — one step size for every
+Every HMC run above used the identity metric: one step size for every
 direction. On an axis-aligned target of unequal scales that single step size is
 squeezed by the *tightest* direction (leapfrog's stability limit is set by the
 largest curvature), so the *widest* direction is under-stepped and mixes slowly.
 The fix is a mass matrix $M$ with $K(p) = \tfrac12 p^\top M^{-1} p$, adapted so
-$M^{-1} = \operatorname{diag}(\text{marginal variances})$ — each coordinate is
+$M^{-1} = \operatorname{diag}(\text{marginal variances})$: each coordinate is
 preconditioned to unit scale and one step size fits all of them (drift becomes
 `x += eps * inv_mass * p`; a diagonal rescale is still a shear, so exactness is
-untouched — derivation and the whitening argument in [theory](theory/derivations.md) §4.8).
+untouched; derivation and the whitening argument in [theory](theory/derivations.md) §4.8).
 The diagonal is learned during warmup from Stan-style memoryless expanding
 windows, with the step-size dual averaging restarted after each metric change.
 
@@ -312,10 +312,10 @@ seeds, so the metric is the only difference):
 | 50 | **3.3** | 28.3 | 2395 (2500) |
 
 The adapted metric recovers the true variance and **whitens every $r$ to the
-same isotropic problem** — a flat $\approx 30$ ESS/1k-grad regardless of scale.
+same isotropic problem**: a flat $\approx 30$ ESS/1k-grad regardless of scale.
 The identity metric is at the mercy of the scale: its single step size resonates
 unpredictably with the wide direction (fixed-$L$ HMC), swinging from 3 to 34 with
-no reliability. The win is not a fixed multiplier — it is *scale-independence*.
+no reliability. The win is not a fixed multiplier: it is *scale-independence*.
 
 <p align="center"><img src="figures/mass_matrix_gain.png" width="440"></p>
 
@@ -327,8 +327,8 @@ no reliability. The win is not a fixed multiplier — it is *scale-independence*
 | $\log\tau$ (funnel) | 9.1 | 21.5 | 2.4× |
 | $\eta_1$ | 3.2 | 47.8 | **14.8×** |
 
-The metric widens $\mu$ and the $\eta_j$ — the coordinates the unit step size
-under-served — driving them to near-independence ($\tau_{\text{int}}\to 1$, hence
+The metric widens $\mu$ and the $\eta_j$ (the coordinates the unit step size
+under-served), driving them to near-independence ($\tau_{\text{int}}\to 1$, hence
 the shared ceiling of 47.8). But $\log\tau$ gains only 2.4×, and that residual is
 the honest limit of the cheap fix. The three gains hold up at five seeds (§14
 re-measures them at 1.26× / 2.79× / 13.3×, with $\log\tau$'s spanning 2.2–3.7
@@ -336,7 +336,7 @@ across seeds, so the single-seed 2.4 above is inside its own spread).
 
 What the residual *is* was asserted here and is now measured, and the assertion
 was wrong. This section used to read "a diagonal metric rescales marginals, it
-cannot rotate, so the funnel curvature in $(\log\tau, \eta)$ survives — that
+cannot rotate, so the funnel curvature in $(\log\tau, \eta)$ survives; that
 residual is exactly what a dense metric or NUTS is for". The first half is a
 true statement about diagonal metrics and the second half does not follow here:
 this posterior's correlation matrix has $\kappa(R) = 1.42$, so there is
@@ -348,12 +348,12 @@ costs to *estimate* is §13; §14 puts it on this posterior.
 ### 8. Rank-normalized split-$\hat R$ (`experiments/rank_rhat.py`)
 
 Classic split-$\hat R$ (§6.2) is a ratio of a between-chain to a within-chain
-*variance* — meaningful only when the target has one. On a heavy-tailed
+*variance*, meaningful only when the target has one. On a heavy-tailed
 posterior, $W$ is dominated by a few enormous draws and is so noisy that a real
 between-chain disagreement disappears into it: the statistic reads a falsely
 reassuring $\approx 1.00$ on chains that have plainly not mixed. Since heavy
 tails are exactly where mixing is hardest, this is the case you most want a
-diagnostic to catch. Vehtari et al. (2021) work with *ranks* instead — finite no
+diagnostic to catch. Vehtari et al. (2021) work with *ranks* instead, finite no
 matter how heavy the tails: pool the draws, replace each by its (average) rank,
 map ranks to normal scores via the Blom transform
 $z = \Phi^{-1}\!\big((r-\tfrac38)/(mn-\tfrac14)\big)$, and run ordinary
@@ -366,17 +366,17 @@ Three controlled cases, each with a known verdict (deterministic; `SEED = 202607
 
 | case | classic $\hat R$ | rank bulk | rank folded | rank $\hat R$ | binds |
 |---|---|---|---|---|---|
-| A — mixed $N(0,1)$ (converged) | 1.00 | 1.00 | 1.00 | **1.00** | — |
-| B — Cauchy, location shift of 6 | 1.00 | **1.27** | 1.00 | **1.27** | bulk |
-| C — Cauchy, scale $1$ vs $6$, same median | 1.00 | 1.00 | **1.18** | **1.18** | folded |
+| A: mixed $N(0,1)$ (converged) | 1.00 | 1.00 | 1.00 | **1.00** | - |
+| B: Cauchy, location shift of 6 | 1.00 | **1.27** | 1.00 | **1.27** | bulk |
+| C: Cauchy, scale $1$ vs $6$, same median | 1.00 | 1.00 | **1.18** | **1.18** | folded |
 
 <p align="center"><img src="figures/rank_rhat.png" width="720"></p>
 
 Reading the three: (A) where the classic statistic is valid the rank version
-agrees — it is not allowed to invent a problem. (B) two of four Cauchy chains
+agrees: it is not allowed to invent a problem. (B) two of four Cauchy chains
 shifted by three inter-quartile ranges are genuinely unmixed, but the infinite
 variance fools the classic statistic; the rank *bulk* term catches the shift.
-(C) equal medians, unequal spread — now the *location* terms (classic **and**
+(C) equal medians, unequal spread: now the *location* terms (classic **and**
 rank-bulk) are both blind, and only the folded term sees it. C is the case that
 justifies folding rather than stopping at the bulk rank statistic. `summarize()`
 reports `rhat_rank` next to the classic `rhat` so the gap is visible per
@@ -389,16 +389,16 @@ mismatch, but fixed-length HMC still carries a hand-set knob: the number of
 leapfrog steps $L$. Too few and the proposal barely moves; too many and the
 trajectory U-turns back toward the start, so the extra gradients buy nothing.
 NUTS ([`mcmc/nuts.py`](mcmc/nuts.py), multinomial form of Betancourt 2017) grows
-each trajectory until it starts to fold back on itself — no $L$. The honest
+each trajectory until it starts to fold back on itself: no $L$. The honest
 question is whether removing the knob *costs* efficiency; the yardstick is **ESS
-per gradient** (per 1000 model evaluations — the hardware-independent currency,
+per gradient** (per 1000 model evaluations, the hardware-independent currency,
 with the same asterisk as §6: a gradient eval does more work than RWMH's density
 eval, so the per-eval column flatters the gradient-free row).
 
 | non-centered funnel (10-dim) | grad | ESS($v$) | min ESS | **ESS($v$) / 1k ev** | mean depth |
 |---|---|---|---|---|---|
-| RWMH | density | 1,102 | 1,102 | 4.2 | — |
-| HMC (fixed $L=20$) | gradient | 6,616 | 6,616 | 6.7 | — |
+| RWMH | density | 1,102 | 1,102 | 4.2 | - |
+| HMC (fixed $L=20$) | gradient | 6,616 | 6,616 | 6.7 | - |
 | **NUTS** | gradient | 4,545 | 4,545 | **29.2** | 1.9 |
 
 | eight schools (10-dim) | grad | ESS($\tau$) | min ESS | **ESS($\tau$) / 1k ev** | div |
@@ -417,12 +417,12 @@ carries the asterisk (its eval is a cheap density, and its worst-coordinate ESS
 is 181 against NUTS's 1,963).
 
 **NUTS removes the length knob, not the geometry.** Run it on the *centered*
-funnel and its divergences pile into the neck — 13% of iterations, and $v$ is
+funnel and its divergences pile into the neck: 13% of iterations, and $v$ is
 under-covered ($\mathrm{sd}\,2.7$ vs the true $3.0$). Non-centering (§2) drops
 that to **zero** divergences and $\mathrm{sd}\,3.0$. This is the honest limit and
 the note on simplifications vs Stan: our NUTS uses only a *diagonal* metric and
 the endpoint-momentum U-turn check, so the neck's curvature defeats it exactly as
-it defeats fixed-L HMC — but the centered funnel defeats Stan's NUTS too, because
+it defeats fixed-L HMC, but the centered funnel defeats Stan's NUTS too, because
 the neck is a property of the parameterization, not the sampler. The fix is
 choosing good coordinates, not a fancier integrator.
 
@@ -431,7 +431,7 @@ choosing good coordinates, not a fancier integrator.
 ### 10. The normalizing constant, and what it costs (`experiments/ais.py`)
 
 Every sampler above works on an unnormalized density because $Z$ cancels out of
-the accept ratio — which is also why none of them can report a marginal
+the accept ratio, which is also why none of them can report a marginal
 likelihood or a Bayes factor. `mcmc/ais.py` is the one thing here that can.
 Ground truth is free: each target is a normalized density times $e^{2.5}$, so
 $\log Z = 2.5$ exactly, in every dimension.
@@ -453,7 +453,7 @@ the ordering reverses and annealing is worth 1.8×.
 
 The column that reconciles them is the effective particle count, not the ESS
 *fraction* the diagnostic reports. At $d = 4$, $T = 1$ has an ESS fraction of
-0.005 — which sounds catastrophic — but 0.005 of 40,000 particles is **182**
+0.005, which sounds catastrophic, but 0.005 of 40,000 particles is **182**
 effective ones, while $T = 500$ turns a fraction of 0.352 into **28**. A ladder
 buys ESS fraction by spending the particles it is a fraction of, and only wins
 when the fraction was so small that there was nothing left to spend: at
@@ -469,13 +469,13 @@ row), the estimate of $\log Z$ sits *below* the truth by
 | after jackknife | −1.81 | −1.11 | −0.37 | −0.38 | −0.19 | −0.01 |
 
 Jensen fixes the sign, so an under-resourced run *understates* the evidence
-rather than scattering around it — the failure that quietly decides a Bayes
+rather than scattering around it, the failure that quietly decides a Bayes
 factor. The jackknife removes most of it (a factor of 3–23 here) and not all.
 And the decay is slower than the $O(1/N)$ leading term predicts over this
 range: $N \times \text{bias}$ drifts from −303 to −493 instead of settling, so
 the higher-order terms are still doing real work at $N = 1600$.
 
-**Where it lies to you — not where I expected.** Two Gaussians 12 apart, the
+**Where it lies to you: not where I expected.** Two Gaussians 12 apart, the
 target §4 built parallel tempering for, and no transition here ever crosses the
 barrier. AIS gets it right anyway (error −0.04): its independence comes from
 drawing $p_0$ afresh every particle, not from the chain mixing, so a $p_0$ that
@@ -484,12 +484,12 @@ genuine failure needs a $p_0$ that never proposes into a mode:
 
 | $p_0$ | $\log Z$ | error | predicted | ESS fraction |
 |---|---|---|---|---|
-| broad, covers both | 2.460 | −0.040 | — | 0.506 |
+| broad, covers both | 2.460 | −0.040 | - | 0.506 |
 | narrow on left mode | 1.450 | **−1.050** | $\log 0.35 = -1.050$ | **1.000** |
 | narrow on right mode | 2.069 | **−0.431** | $\log 0.65 = -0.431$ | **1.000** |
 
-Both failures are exact rather than noisy — the estimate is short by precisely
-the log of the mass it never saw — and both report a *perfect* effective sample
+Both failures are exact rather than noisy (the estimate is short by precisely
+the log of the mass it never saw), and both report a *perfect* effective sample
 size, because the weights within the one mode it can see are uniform. The only
 diagnostic available without ground truth is at its most reassuring exactly
 when the answer is wrong.
@@ -500,7 +500,7 @@ when the answer is wrong.
 
 [`mcmc/sgld.py`](mcmc/sgld.py) deletes MALA's accept step and pays an
 $O(\epsilon)$ bias for it, measured there against a closed form. The same
-deletion applied to *HMC* does not merely cost a bias — the chain has **no
+deletion applied to *HMC* does not merely cost a bias: the chain has **no
 stationary distribution at all**. Leapfrog is volume preserving, which is
 exactly why HMC's single accept can repair a whole trajectory; feed it a noisy
 gradient and every step pumps energy in with nothing to take it out. Chen, Fox
@@ -509,7 +509,7 @@ works, what it costs, and whether it is affordable on a real posterior.
 
 Because the gradient is linear on a Gaussian, the update is a 2-D Gaussian
 AR(1) in $(\theta, v)$ and the stationary covariance is the exact solution of a
-discrete Lyapunov equation — closed form, no Monte Carlo. Everything below is
+discrete Lyapunov equation, closed form, no Monte Carlo. Everything below is
 scored against that, and the tests score it in turn against the same solution
 worked out by hand, which shares no code with the solver.
 
@@ -529,13 +529,13 @@ $\gamma = 2$, $V = 4$). Raising $\gamma$ *does* help, about 2× per doubling:
 at $h = 0.05$ each doubling from $\gamma = 0.5$ to 4 cuts the miscorrection
 term by 1.97× to 1.99×, and 2× is the small-step limit. The position–momentum
 correlation is nonzero at every step and every friction, which the target says
-should be zero — an artifact of updating $\theta$ with the new velocity, not of
+should be zero: an artifact of updating $\theta$ with the new velocity, not of
 the noise.
 
 **Sampler against closed form, 23 cells, three arms** ($\gamma = 1$, $V = 4$,
 512 chains × 8000 draws). The table is the *closed form* for
 $\mathrm{Var}[\theta]$; every sampled cell lands within **0.17%** of its own
-prediction — not within 0.17% of the target, which is a different and much
+prediction, not within 0.17% of the target, which is a different and much
 weaker claim:
 
 | $h$ | 0.05 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 | 0.6 |
@@ -547,12 +547,12 @@ weaker claim:
 The corrected row is the exact-gradient row *identically*: the correction is
 algebraic, not approximate, so subtracting $h^2\hat V$ from the injected
 variance restores the noise-free stationary law digit for digit. And the last
-cell is the constraint showing itself — $2\gamma \geq h \hat V$ caps the step at
+cell is the constraint showing itself: $2\gamma \geq h \hat V$ caps the step at
 $2\gamma/\hat V = 0.5$, so the run is refused rather than quietly re-tuned.
 
 **Without friction it does not converge to anything.** At $\gamma = 0$ the
 transition matrix has determinant 1, its eigenvalues sit on the unit circle, and
-the variance grows roughly linearly in the number of steps — 1.29, 2.58, 4.78,
+the variance grows roughly linearly in the number of steps: 1.29, 2.58, 4.78,
 9.84, 20.36 against a target variance of 1, at 1k through 16k steps. The closed
 form raises there instead of returning a number.
 
@@ -591,9 +591,9 @@ with $\hat V$ the worst per-coordinate minibatch-gradient variance:
 Measured at two points because the noise is local: a badly-fit draw has large
 residuals, and the MAP fit is 32× (batch 50) to 43× (batch 10) quieter. It
 does not change the conclusion.
-**The correction that makes SGHMC correct is not affordable here** — buying it
+**The correction that makes SGHMC correct is not affordable here**: buying it
 at a usable step needs a friction so large that the discretization it is
-supposed to fix becomes unstable — which is the same shape as SGLD's own
+supposed to fix becomes unstable, which is the same shape as SGLD's own
 finding on this posterior (see the `mcmc/sgld.py` row above): the regime where
 the minibatch noise is negligible starts below a step anyone would run.
 
@@ -611,7 +611,7 @@ predictive bands, not parameters.
 [`mcmc/targets.py`](mcmc/targets.py) has shipped a Student-t since the first
 commit, described there as "the standard heavy-tail mixing cautionary target",
 and until now no result used it. The reason to run it is that "MCMC mixes badly
-in heavy tails" runs three separate things together — and this target has an
+in heavy tails" runs three separate things together, and this target has an
 exact sampler, so they come apart. An i.i.d. arm is a sampler with no
 autocorrelation at all: anything that goes wrong *there* is not the sampler's
 fault.
@@ -662,15 +662,15 @@ ratio is taken from the unrounded widths.)
 | 5.0 | 0.952 | 0.159 | 0.949 | 0.020 | 7.93× |
 | 30 | 0.947 | 0.128 | 0.951 | 0.016 | 7.98× |
 
-The statistic is **self-normalized** — $s$ is inflated by exactly the draws that
-inflate the numerator — and for symmetric heavy tails that ratio stays tight.
+The statistic is **self-normalized** ($s$ is inflated by exactly the draws that
+inflate the numerator), and for symmetric heavy tails that ratio stays tight.
 The algebra says the same thing and is the more useful form: $s$ grows like
 $n^{1/\nu - 1/2}$, so the half-width $s/\sqrt n$ shrinks like $n^{1/\nu - 1}$,
 which is the mean's *true* error rate from the table above. The interval is
 rate-matched for free. What it loses is not honesty but information: at
 $\nu = 1$, **64× the data buys a 2% narrower interval**, against the 7.98× a
 light-tailed target delivers at the same budget ($\sqrt{64} = 8$ is the limit).
-The trouble is legible in the width's scaling with $n$, never in the coverage —
+The trouble is legible in the width's scaling with $n$, never in the coverage,
 and only if you vary $n$ at all, which one run does not.
 
 **3. The third failure is the sampler's, it is real, and it is the only one ESS
@@ -692,14 +692,14 @@ was built to detect, and it detects it.
 
 **The point of running all three together is what ESS does on the first
 failure: nothing.** The i.i.d. arm reads ESS/draw of 0.998 to 1.000 at every
-dof — it must, there is no autocorrelation — while its sample mean at
+dof (it must, there is no autocorrelation) while its sample mean at
 $\nu = 1.5$ is converging at $n^{-1/3}$ and at $\nu = 1$ is not converging at all. ESS measures
 autocorrelation, which is one of the three things that can go wrong here, and a
 perfect ESS is consistent with an estimator that will never reach its target.
 The diagnostic that would have caught it is the one nobody plots: the interval
 width against $n$.
 
-Two smaller things worth keeping. The samplers are **slow, not wrong** — their
+Two smaller things worth keeping. The samplers are **slow, not wrong**: their
 error on the bounded functional is ≤ 0.004 at every dof, so inefficiency is the
 whole of the damage. And substituting ESS for $n$ in the interval makes it
 *conservative* rather than optimistic (coverage 0.996–1.000 in the low-dof MCMC
@@ -716,7 +716,7 @@ rotate, so $\log\tau$ gains $2.4\times$ where $\eta_1$ gains $14.8\times$. This
 section builds the dense metric on a target *chosen* to have correlation to
 remove, so that the estimator can be scored against a known answer; whether
 eight schools is such a target is §14's question, and the answer there is no.
-The dense metric $M^{-1} = \Sigma_\pi$ is the fix on paper — it makes the whitened
+The dense metric $M^{-1} = \Sigma_\pi$ is the fix on paper: it makes the whitened
 Hessian exactly $I$, $\kappa = 1$, where the best possible *diagonal* leaves
 $\kappa(R)$, the correlation matrix's own conditioning (theory §4.10). Warmup
 does not get $\Sigma_\pi$. It gets a window of draws, and has to estimate
@@ -725,7 +725,7 @@ section asks what survives that, on an AR(1) Gaussian ($\Sigma_{ij} =
 \rho^{|i-j|}$, $\rho = 0.95$) where every answer is known in closed form.
 
 **The regularization is not a formality.** A window of $n$ pooled draws gives a
-covariance of rank $\le n - 1$, so at $n \le d$ it is singular — and the failure
+covariance of rank $\le n - 1$, so at $n \le d$ it is singular, and the failure
 is *sometimes silent*. At $n = d = 12$ the smallest eigenvalue lands at
 $+2\times10^{-16}$, the Cholesky succeeds, and the sampler runs with a metric of
 condition number $2\times10^{16}$; one draw fewer and the sign flips and it
@@ -753,7 +753,7 @@ Frobenius rows are the mean over windows and the $\kappa$ rows the median:
 The raw sample covariance is the **best** of the three in Frobenius error at
 every window size up to $n/d = 20$ and the **worst by fourteen orders of
 magnitude** as a metric at $n = d$ ($5\times10^{15}$ against Ledoit–Wolf's 18;
-at $n/d = 0.5$ it is not a metric at all) — for the same reason it wins:
+at $n/d = 0.5$ it is not a metric at all), for the same reason it wins:
 truncating small directions to zero is close in squared error and fatal to a
 quantity that divides by the smallest eigenvalue. An estimator tuned for a sum-of-squares loss owes nothing to a
 ratio-of-eigenvalues loss. By $n/d = 20$ the three agree in $\kappa$ to about
@@ -765,7 +765,7 @@ default and Ledoit–Wolf is what to reach for on a short window.
 $d$: the achieved $\kappa$ degrades from 1.28 ($d=2$) to 7.2 ($d=128$, where
 $n/d = 3.1$), but $\kappa(R)$ grows faster (39 → 1337), so the gain over the
 best possible diagonal *rises* to $\approx 276$ at $d = 32$ and is still 186 at
-$d = 128$. On this family the estimate does not fall apart first — the reason to
+$d = 128$. On this family the estimate does not fall apart first: the reason to
 prefer a diagonal at large $d$ is the $O(d^2)$ per-step cost, not the estimate.
 
 **And a trap worth publishing.** Comparing metrics at a *shared* trajectory
@@ -787,16 +787,16 @@ at a shared one. ($\sqrt\kappa$ predicts an $L$ ratio of 15; the measured one is
 $25/2 = 12.5$.) The diagonal metric landing *below* the identity is not
 noise: this target's marginals are already unit variance, so there is no scale
 disparity for a diagonal to remove, and what is left is warmup spent on a metric
-that does nothing — §7's claim in its least flattering form.
+that does nothing, §7's claim in its least flattering form.
 
 ![dense metric estimation](figures/dense_metric_estimation.png)
 
 Everything above is on a target built to have $\kappa(R) = 324$. §14 puts the
 same code on the posterior §7's limitation was measured on, where $\kappa(R)$
-is 1.42, and the $9.9\times$ becomes nothing — which is the useful half of
+is 1.42, and the $9.9\times$ becomes nothing, which is the useful half of
 knowing what a dense metric is for.
 
-### 14. Eight schools, dense vs diagonal — the answer is no (`experiments/eight_schools_metric.py`)
+### 14. Eight schools, dense vs diagonal: the answer is no (`experiments/eight_schools_metric.py`)
 
 §7 measured a residual and named a cause: $\log\tau$ gains only $2.4\times$ from
 the diagonal metric because a diagonal "cannot rotate". §13 built the dense
@@ -819,7 +819,7 @@ the exact dense metric gives 1.
 
 The largest off-diagonal correlation in this posterior is $0.090$. So a dense
 metric's entire algebraic headroom over a diagonal here is a factor 1.42 in
-conditioning — $1.19\times$ in step size — and that is an upper bound recorded
+conditioning ($1.19\times$ in step size), and that is an upper bound recorded
 before the sampler ran.
 
 **B. Through the sampler.** Five metrics, trajectory length swept per metric
@@ -839,7 +839,7 @@ The four adapted rows are identical at their best $L$, and that number is not a
 result. Geyer's estimator clamps $\tau$ at 1, so every one of those 15 (seed,
 coordinate) cells is *censored*: the arms are producing draws the estimator
 cannot distinguish from independent, and four bounds coinciding is not a
-measured tie. The comparison has to be made where it can still discriminate —
+measured tie. The comparison has to be made where it can still discriminate,
 $L = 3$, the longest trajectory at which no median $\tau$ is clamped:
 
 | metric | $\tau$ for $\log\tau$ | across 5 seeds |
@@ -854,7 +854,7 @@ Dense leads diagonal by $1.06\times$ on the binding coordinate, well inside
 either arm's seed range. **The dense metric is not measurably better than the
 diagonal on this posterior**, and the oracle rows say why not: handing it the
 true covariance changes nothing, so this is not an estimation failure. (The
-warmup estimate is in fact good — marginal sds within 5.2% of the reference,
+warmup estimate is in fact good: marginal sds within 5.2% of the reference,
 and its off-diagonal correlations track the reference's at $r = 0.79$ over
 entries whose largest magnitude is 0.090, so what it reproduces faithfully is
 the absence of structure.)
@@ -874,7 +874,7 @@ draw instead of once at a Gaussian approximation:
 | diagonal | 2.38 | 1.46 | 6.60 | 4.5 |
 | dense | 2.23 | 1.32 | 6.07 | 4.6 |
 
-Cut by $\log\tau$, the same numbers say it plainly — the median local $\kappa$
+Cut by $\log\tau$, the same numbers say it plainly: the median local $\kappa$
 the diagonal achieves runs 3.35 → 1.88 → 1.46 → 2.31 → 5.95 across quintiles, a
 $4.1\times$ swing, while the best the rotation buys in any quintile is
 $1.17\times$:
@@ -885,12 +885,12 @@ $1.17\times$:
 conditioning $4.1\times$ across quintiles; the rotation, the dense metric's
 whole advantage over the diagonal, moves it at most $1.17\times$ in any one of
 them. And 2.04% of posterior draws
-have an indefinite $-H$ — a saddle, which no positive-definite mass matrix
+have an indefinite $-H$, a saddle, which no positive-definite mass matrix
 conditions at all. The eta block of the Hessian makes the mechanism explicit:
 it is diagonal with entries $1 + \tau^2/\sigma_j^2$, so the curvature there is a
 function of *where in the posterior you are*, and a single matrix estimated once
 in warmup sees only its average. The thing that would fix it is a metric that
-varies with position — Riemannian HMC — which is not implemented here and is
+varies with position (Riemannian HMC), which is not implemented here and is
 the standing limitation this section leaves.
 
 ### 15. The funnel: where the dense metric fails too (`experiments/funnel_metric.py`)
@@ -954,7 +954,7 @@ ranges that all straddle 1. The oracle pair calibrates that scatter, and this
 is the part worth reading: those two arms are the *same matrix*, since
 `DiagonalMetric(v)` and `DenseMetric(diag(v))` differ only in how they
 associate the same reals ([`mcmc/metric.py`](mcmc/metric.py)). Their ratio is
-therefore pure noise by construction — and it comes back 1.000 at $L = 1$ and
+therefore pure noise by construction, and it comes back 1.000 at $L = 1$ and
 2, then 1.383 at $L = 10$ and 0.777 at $L = 40$. **That is the resolution of
 this comparison, measured: identical matrices come back up to $1.38\times$
 apart, either way, and every adapted median sits inside that band but one,
@@ -962,7 +962,7 @@ $L = 25$'s 0.63, whose own four seeds run 0.14–1.30.**
 
 **C. Why.** The Hessian is closed form
 ([`mcmc/targets.py`](mcmc/targets.py)), so the local conditioning is available
-at every draw — and here it can be evaluated at *exact* draws rather than a
+at every draw, and here it can be evaluated at *exact* draws rather than a
 chain's, which matters precisely because every chain above under-represents the
 neck. Reported as $\max|\lambda|/\min|\lambda|$, because $-H$ is positive
 definite at **0 of 5000 draws** (it needs $\chi^2_9 < 0.22$, §4.12); by
@@ -978,7 +978,7 @@ reported once rather than per row.
 | $[+2.6, +8.9]$ | 224.3 | 26.1 | 26.1 | 1.000 |
 
 Position moves the achievable conditioning $19\times$ across quintiles. The
-rotation moves it $1.000\times$ — exactly, and asserted in the script rather
+rotation moves it $1.000\times$, exactly, and asserted in the script rather
 than eyeballed. §14's conclusion, with the second column now an identity.
 
 <p align="center"><img src="figures/funnel_metric.png" width="760"></p>
@@ -1007,11 +1007,11 @@ chose it.
 
 **What does work is not a metric.** §2's non-centered arm mixes essentially
 perfectly on this same target, and $x_i = e^{v/2} z_i$ is a *position-dependent*
-change of coordinates — the thing a global $M$ cannot be. Riemannian HMC
+change of coordinates, the thing a global $M$ cannot be. Riemannian HMC
 (Girolami and Calderhead, 2011) is the general form: a metric $M(z)$ rebuilt at
 every point, which absorbs the $e^v$ span by construction. It costs a
 non-separable Hamiltonian, an implicit generalized leapfrog, and a positive
-definite surrogate where $-H$ is indefinite — which, on this target, is
+definite surrogate where $-H$ is indefinite, which, on this target, is
 everywhere. It is not implemented here, and §14's standing limitation now has
 two measurements behind it instead of one.
 
@@ -1029,7 +1029,7 @@ size and leapfrog length, so the per-chain arithmetic is identical) across
 | 8 | 0.12 | 0.015 | 29k |
 | 64 | 0.22 | 0.003 | 112k |
 
-Going from 1 to 64 chains costs only ~1.8× the wall-clock *per iteration* — so
+Going from 1 to 64 chains costs only ~1.8× the wall-clock *per iteration*, so
 the per-chain cost falls ~36× and effective-sample **throughput** rises almost
 linearly with the chain count (the right panel tracks the ideal line until
 bandwidth starts to bind past ~16 chains). This is why the many-chain $\hat R$
@@ -1046,7 +1046,7 @@ with the asymmetric Hastings correction that makes it exact. Delete the accept
 step and the same update is the *unadjusted* Langevin algorithm, and the
 deletion is not free: on $\pi = N(0,1)$ the chain becomes AR(1) with stationary
 variance $1/(1-\varepsilon^2/4)$, over-dispersed by 6.7% at $\varepsilon = 0.5$
-and 19% at $0.8$ — a bias that more samples do not remove, only a smaller step
+and 19% at $0.8$: a bias that more samples do not remove, only a smaller step
 does. That is Exercise 1(c) in [`theory/derivations.md`](theory/derivations.md)
 Sec. 7, and `tests/test_mala.py` measures both chains against it.
 
@@ -1054,7 +1054,7 @@ Score-based generative models run exactly that biased sampler, and not for
 speed. They have a *learned* $\nabla\log\pi$ and no normalized density, so
 there is nothing to put in a Metropolis ratio: the accept step is unavailable
 in principle, not skipped. Two changes make it work anyway. First the target is
-softened — sample a sequence of noised densities $\pi * N(0,\sigma_i^2 I)$ from
+softened: sample a sequence of noised densities $\pi * N(0,\sigma_i^2 I)$ from
 large $\sigma$ down to small, carrying the state forward, so the multimodality
 that traps a single Langevin chain (the failure `experiments/tempering.py`
 attacks here with replica exchange instead) is solved at the scale where the
@@ -1062,7 +1062,7 @@ modes have been smeared together. Second the step size is tied to the level,
 $\varepsilon_i^2 \propto \sigma_i^2$, and it has a ceiling that holds for *any*
 target: writing the noised score as a posterior mean gives
 $\nabla s_\sigma \succeq -I/\sigma^2$, so the linearized update contracts only
-while $\varepsilon^2 < 4\sigma^2$ — the same $4$ as in the variance formula
+while $\varepsilon^2 < 4\sigma^2$, the same $4$ as in the variance formula
 above.
 
 Nothing there is a better MCMC method. It is a worse one, run on a target
@@ -1070,11 +1070,11 @@ nobody can write down, under an annealing schedule that buys back the mixing
 the accept step was not there to fix. A companion repo,
 [diffusion-from-scratch](https://github.com/porth-bot/diffusion-from-scratch),
 builds that side of the bridge on 2D targets whose scores are known in closed
-form — which is what makes the price of the missing accept step measurable
+form, which is what makes the price of the missing accept step measurable
 rather than argued: run its samplers on the exact score and on a learned one
 and the difference is the estimation error, on its own. Two findings there
 are about this paragraph. The step-size ceiling above is enforced in code,
-because an unstable ladder does not blow up visibly — it returns samples with
+because an unstable ladder does not blow up visibly: it returns samples with
 the right support and the wrong mode weights. And running the annealed
 Langevin sampler *longer* with a learned score makes it **worse** (sliced
 $W_2$ 0.274 → 0.807 at ten times the budget), because an equilibrium sampler
@@ -1097,7 +1097,7 @@ produced with (Python 3.12.13); `pyproject.toml` keeps lower bounds instead, so
 CI goes on testing against current releases on 3.9 and 3.12.
 
 **How exact is it?** Rerunning the whole suite in that pinned environment
-regenerates 25 of the 26 committed PNGs byte-for-byte — the samplers are seeded
+regenerates 25 of the 26 committed PNGs byte-for-byte: the samplers are seeded
 and NumPy's bit generators are stable across versions, so the chains, and
 therefore the ESS and R-hat tables, are identical. The one file that differs is
 `vectorized_scaling.png`, which plots wall-clock per step and so measures the
@@ -1136,11 +1136,11 @@ python funnel_metric.py         # ~193 s (the funnel: the same answer, from clos
 ```
 
 (Those are measured, not estimated, and all nineteen come from the *same*
-`reproduce.sh` run so they add up to the total above — the previous list did
+`reproduce.sh` run so they add up to the total above; the previous list did
 not, having accumulated across sessions and machines, and disagreed with a
 single run by up to 2× in both directions.)
 
-`emcee` is used *only* by the external benchmark — it is not a dependency of the
+`emcee` is used *only* by the external benchmark; it is not a dependency of the
 package or the tests (CI installs numpy + pytest only). Install it with
 `pip install emcee` or `pip install -e '.[bench]'`.
 
@@ -1162,7 +1162,7 @@ them byte-for-byte.
   hand-derived gradient against central differences.
 - **Divergences are a feature.** Trajectories that leave the typical set
   overflow to `inf`/`NaN`, which propagates to a $-\infty$ acceptance ratio
-  and a rejection — the mechanism *is* the diagnostic. `np.errstate` is
+  and a rejection: the mechanism *is* the diagnostic. `np.errstate` is
   scoped to exactly those computations, and the test suite turns any other
   `RuntimeWarning` into a failure.
 - **Adaptation stops at warmup's end.** Tuning $\varepsilon$ from chain
@@ -1179,7 +1179,7 @@ them byte-for-byte.
   metric that used to sit here as the next step is done too (§13, §14) and the
   result is a negative worth keeping: it is worth $9.9\times$ on a target with
   correlation to remove and **nothing** on eight schools, whose $\kappa(R)$ is
-  1.42. What is left after it is position-dependent curvature — the local
+  1.42. What is left after it is position-dependent curvature: the local
   $\kappa$ of the whitened Hessian swings $4.1\times$ across the posterior where
   the best available rotation moves it $1.17\times$, and 2% of draws sit at a
   saddle no positive-definite mass matrix conditions. §15 puts the same question
@@ -1196,7 +1196,7 @@ them byte-for-byte.
   a NUTS one; and both our NUTS and Stan's diverge in the *centered* funnel
   neck, where the fix is non-centering rather than the sampler.
 - **Phase 2 (done):** Bayesian neural network posterior via this repo's HMC on
-  a small MLP — predictive uncertainty and calibration vs a MAP point estimate
+  a small MLP: predictive uncertainty and calibration vs a MAP point estimate
   and a deep ensemble ([`experiments/bnn.py`](experiments/bnn.py), section 5).
   The diagonal mass matrix that used to sit here as the next step on this
   thread has been run and does not help (§5): the step size stays where it was,
@@ -1207,8 +1207,8 @@ them byte-for-byte.
 - **Heavy tails (§12, done as far as diagnosis goes):** what is *not* fixed
   there is any of it. The section measures that a bulk-scaled proposal loses
   180× its ESS per draw between $\nu = 30$ and a Cauchy, and stops. The
-  standard repairs — a heavier-tailed proposal, a transformation of the target
-  to light tails, or tempering the tail index — are none of them run here, and
+  standard repairs (a heavier-tailed proposal, a transformation of the target
+  to light tails, or tempering the tail index) are none of them run here, and
   the honest reason is that the section's more useful half is the failure no
   sampler can repair (an estimand whose CLT does not exist), which a better
   proposal would leave exactly where it is.
@@ -1232,17 +1232,17 @@ buried.
 
 | Repo | Built from scratch |
 | --- | --- |
-| **mcmc-from-scratch** *(this repo)* | Metropolis-Hastings, Gibbs, HMC, NUTS, MALA, parallel tempering — validated against exact posteriors |
+| **mcmc-from-scratch** *(this repo)* | Metropolis-Hastings, Gibbs, HMC, NUTS, MALA, parallel tempering, validated against exact posteriors |
 | [gp-from-scratch](https://github.com/porth-bot/gp-from-scratch) | GP regression, kernels with hand-derived gradients, ML-II, and the NTK/NNGP wide-network correspondence |
 | [grokking-transformer](https://github.com/porth-bot/grokking-transformer) | A transformer that groks modular arithmetic, and the Fourier circuit it learns |
 | [pinn-from-scratch](https://github.com/porth-bot/pinn-from-scratch) | Physics-informed networks: exact autograd PDE residuals against closed-form solutions |
-| [diffusion-from-scratch](https://github.com/porth-bot/diffusion-from-scratch) | Score matching, reverse-time samplers, and the probability-flow ODE — against exact scores at every noise level |
+| [diffusion-from-scratch](https://github.com/porth-bot/diffusion-from-scratch) | Score matching, reverse-time samplers, and the probability-flow ODE, against exact scores at every noise level |
 
 The tie to gp-from-scratch is concrete, not decorative. Its NTK section shows
 that an *infinite*-width network's posterior is a Gaussian process with a
 closed-form mean and variance; section 5 here samples a *finite*-width
-network's weight posterior with HMC precisely because that closed form is gone
-— the same Bayesian question, on the two sides of the width limit. And the
+network's weight posterior with HMC precisely because that closed form is gone:
+the same Bayesian question, on the two sides of the width limit. And the
 MALA sampler above is the bridge in the other direction: unadjusted annealed
 Langevin is that proposal minus the accept step, which is where score-based
 generative models start.

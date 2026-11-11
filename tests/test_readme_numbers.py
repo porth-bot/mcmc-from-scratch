@@ -293,7 +293,7 @@ def test_section_2_funnel_table(label):
     assert_thousands(r["draws"], cells[0], f"§2 {label} draws")
     for col, cell in zip(FUNNEL_COLS, cells[1:6]):
         assert_rounds_to(r[col], cell, f"§2 {label} {col}")
-    if cells[6] == "—":
+    if cells[6] == "-":
         assert r["divergent"] == 0  # RWMH has no trajectory to diverge
     else:
         assert_rounds_to(r["divergent"], cells[6], f"§2 {label} divergent")
@@ -460,7 +460,7 @@ def test_section_6_prose_claims():
     body = section("6.")
     g = {x["sampler"]: x for x in d["correlated_gaussian"]}
     # "(27.9 vs 12.6 — ...)" emcee against RWMH, per evaluation
-    em, rw = re.search(r"\(([\d.]+) vs ([\d.]+) —", body).groups()
+    em, rw = re.search(r"\(([\d.]+) vs ([\d.]+);", body).groups()
     assert_rounds_to(g["emcee (stretch)"]["ESS/1k ev"], em, "§6 emcee ESS/1k in prose")
     assert_rounds_to(g["RWMH (ours)"]["ESS/1k ev"], rw, "§6 RWMH ESS/1k in prose")
     # "and even edges HMC's per-eval number"
@@ -486,9 +486,9 @@ def test_section_6_prose_claims():
 
 # -- Sec. 8: rank-normalized split-R-hat (experiments/rank_rhat.py) -----------
 
-RANK_ROWS = {"A — mixed $N(0,1)$ (converged)": "A: mixed N(0,1)",
-             "B — Cauchy, location shift of 6": "B: Cauchy, shifted location",
-             "C — Cauchy, scale $1$ vs $6$, same median": "C: Cauchy, shifted scale"}
+RANK_ROWS = {"A: mixed $N(0,1)$ (converged)": "A: mixed N(0,1)",
+             "B: Cauchy, location shift of 6": "B: Cauchy, shifted location",
+             "C: Cauchy, scale $1$ vs $6$, same median": "C: Cauchy, shifted scale"}
 
 
 @pytest.mark.parametrize("label", sorted(RANK_ROWS))
@@ -502,7 +502,7 @@ def test_section_8_table(label):
     # "binds" is measured, not the script's label: the larger rank term at the
     # table's two decimals, or a dash when they tie there.
     bulk, folded = round(r["rank_bulk"], 2), round(r["rank_folded"], 2)
-    expected = "—" if bulk == folded else ("bulk" if bulk > folded else "folded")
+    expected = "-" if bulk == folded else ("bulk" if bulk > folded else "folded")
     assert cells[4] == expected, f"§8 {label[0]} binds: {cells[4]!r}, measured {expected!r}"
 
 
@@ -613,7 +613,7 @@ def test_section_9_funnel_table(label):
     assert_rounds_to(r["ESS(v)"], cells[1].replace(",", ""), f"§9 funnel {label} ESS(v)")
     assert_rounds_to(r["min ESS"], cells[2].replace(",", ""), f"§9 funnel {label} min ESS")
     assert_rounds_to(r["ESS(v)/1k ev"], cells[3], f"§9 funnel {label} ESS/1k")
-    if cells[4] == "—":
+    if cells[4] == "-":
         assert r["depth"] == "nan"  # only NUTS builds a tree
     else:
         assert_rounds_to(r["depth"], cells[4], f"§9 funnel {label} depth")
@@ -663,7 +663,7 @@ def test_section_9_the_centered_funnel_limit():
     body = section("9.")
     c, n = lim["centered"], lim["non_centered"]
     assert_rounds_to(100 * c["divergent"] / c["draws"],
-                     quoted(body, r"— (\d+)% of iterations"), "§9 centered divergence %")
+                     quoted(body, r": (\d+)% of iterations"), "§9 centered divergence %")
     sd_c, true = re.search(r"\\mathrm\{sd\}\\,([\d.]+)\$ vs the true \$([\d.]+)\$",
                            body).groups()
     assert_rounds_to(c["sd_v"], sd_c, "§9 centered sd[v]")
@@ -819,7 +819,7 @@ def test_section_10_effective_particles():
     d = log("ais")
     body = " ".join(section("10.").split())
     l4 = {r["T"]: r for r in d["ladder_d4"]}
-    frac1, eff1 = re.search(r"\$T = 1\$ has an ESS fraction of ([\d.]+) .*?"
+    frac1, eff1 = re.search(r"\$T = 1\$ has an ESS fraction of ([\d.]+), .*?"
                             r"particles is \*\*(\d+)\*\* effective", body).groups()
     assert_rounds_to(l4[1]["ESS frac"], frac1, "§10 T=1 ESS fraction")
     assert_rounds_to(l4[1]["eff. particles"], eff1, "§10 T=1 effective particles")
@@ -875,7 +875,7 @@ def test_section_10_separated_modes_table(start):
     assert_rounds_to(r["log Z"], cells[0], f"§10 {start} log Z")
     assert_rounds_to(r["err"], cells[1], f"§10 {start} error")
     if r["predicted err"] == "--":
-        assert cells[2] == "—"
+        assert cells[2] == "-"
     else:
         assert cells[2].endswith(f"= {r['predicted err']}$")
         assert_rounds_to(r["err"], r["predicted err"], f"§10 {start} exact miss")
@@ -988,7 +988,7 @@ def test_section_11_error_orders():
 def test_section_11_no_friction_growth():
     rows = log("sghmc")["no_friction"]
     body = " ".join(section("11.").split())
-    printed = re.search(r"steps — ([\d., ]+) against a target variance of 1, "
+    printed = re.search(r"steps: ([\d., ]+) against a target variance of 1, "
                         r"at 1k through 16k steps", body).group(1)
     printed = [p.strip() for p in printed.split(",") if p.strip()]
     assert len(printed) == len(rows)
