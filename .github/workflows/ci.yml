@@ -11,13 +11,24 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      # one leg failing must not cancel the other: on 2026-11-08 the 3.9 leg
+      # could not install its interpreter and took the 3.12 leg down with it,
+      # so a runner problem read as a red suite.
+      fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        include:
+          # 3.9 is the floor pyproject declares. GitHub builds no CPython 3.9
+          # for the ubuntu-26.04 image that ubuntu-latest is moving to, so this
+          # leg stays on 24.04, the newest image that still has one.
+          - python-version: "3.9"
+            os: ubuntu-24.04
+          - python-version: "3.12"
+            os: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       # tests need only numpy + pytest; matplotlib is experiments-only.
